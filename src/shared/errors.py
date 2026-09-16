@@ -1,10 +1,12 @@
 """Shared application errors and sanitized HTTP handlers."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 class AppError(Exception):
@@ -28,9 +30,14 @@ def _request_id(request: Request) -> str:
     return request.state.request_id
 
 
-def _response(request: Request, error: AppError) -> JSONResponse:
+def error_response(
+    request: Request,
+    error: AppError,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
     return JSONResponse(
         status_code=error.status_code,
+        headers=headers,
         content={
             "error": {
                 "code": error.code,
@@ -44,7 +51,7 @@ def _response(request: Request, error: AppError) -> JSONResponse:
 
 
 async def app_error_handler(request: Request, error: AppError) -> JSONResponse:
-    return _response(request, error)
+    return error_response(request, error)
 
 
 async def request_validation_error_handler(
@@ -63,5 +70,21 @@ async def request_validation_error_handler(
         )
     else:
         app_error = AppError("INVALID_REQUEST", "The request is invalid.", 422)
-    return _response(request, app_error)
+    return error_response(request, app_error)
+
+
+async def http_exception_handler(
+    request: Request, error: StarletteHTTPException
+) -> JSONResponse:
+    if error.status_code == 404:
+        app_error = AppError("NOT_FOUND", "Resource not found.", 404)
+    elif error.status_code == 405:
+        app_error = AppError("METHOD_NOT_ALLOWED", "Method not allowed.", 405)
+    else:
+        app_error = AppError(
+            "HTTP_ERROR",
+            "The request could not be completed.",
+            error.status_code,
+        )
+    return error_response(request, app_error, headers=error.headers)
 

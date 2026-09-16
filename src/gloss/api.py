@@ -1,9 +1,8 @@
 """Gloss normalization HTTP API routes."""
 
-import hmac
 import time
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Request
 
 from src.gloss.service import GlossValidationError
 from src.shared.errors import AppError
@@ -20,28 +19,10 @@ _VALIDATION_ERRORS = {
 }
 
 
-async def enforce_internal_key(
-    request: Request,
-    internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
-) -> None:
-    settings = request.app.state.settings
-    configured_key = settings.internal_api_key
-    if configured_key is not None and not hmac.compare_digest(
-        configured_key.get_secret_value(), internal_api_key or ""
-    ):
-        logger.warning(
-            "gloss_normalize request_id=%s mode=%s status=401",
-            request.state.request_id,
-            settings.gloss_mode,
-        )
-        raise AppError("UNAUTHORIZED", "Authentication is required.", 401)
-
-
 @router.post("/normalize", response_model=GlossNormalizeResponse)
 async def normalize_gloss(
     body: GlossNormalizeRequest,
     request: Request,
-    _: None = Depends(enforce_internal_key),
 ) -> GlossNormalizeResponse:
     settings = request.app.state.settings
     started_at = time.perf_counter()

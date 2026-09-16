@@ -222,6 +222,101 @@ def test_configured_internal_key_is_checked_before_body_validation() -> None:
     assert "must-not-be-echoed" not in response.text
 
 
+@pytest.mark.parametrize("provided_key", [None, "wrong"])
+def test_configured_internal_key_is_checked_before_malformed_json(
+    provided_key: str | None,
+) -> None:
+    protected_client = TestClient(
+        create_app(Settings(gloss_mode="template", internal_api_key="secret"))
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "X-Request-ID": "req-malformed-auth",
+    }
+    if provided_key is not None:
+        headers["X-Internal-API-Key"] = provided_key
+
+    response = protected_client.post(
+        "/v1/gloss/normalize",
+        content=b'{"utteranceId":',
+        headers=headers,
+    )
+
+    assert_error(
+        response,
+        status_code=401,
+        code="UNAUTHORIZED",
+        message="Authentication is required.",
+        request_id="req-malformed-auth",
+    )
+
+
+def test_non_ascii_internal_key_is_safely_rejected() -> None:
+    protected_client = TestClient(
+        create_app(Settings(gloss_mode="template", internal_api_key="secret")),
+        raise_server_exceptions=False,
+    )
+
+    response = protected_client.post(
+        "/v1/gloss/normalize",
+        json=payload(),
+        headers=[
+            (b"x-internal-api-key", b"\xff"),
+            (b"x-request-id", b"req-nonascii-key"),
+        ],
+    )
+
+    assert_error(
+        response,
+        status_code=401,
+        code="UNAUTHORIZED",
+        message="Authentication is required.",
+        request_id="req-nonascii-key",
+    )
+
+
+def test_unexpected_service_error_is_sanitized_with_request_id() -> None:
+    class ExplodingGlossService:
+        async def normalize(self, request: object) -> object:
+            raise RuntimeError("provider URL and secret must never escape")
+
+    application = create_app(Settings(gloss_mode="template"))
+    application.state.gloss_service = ExplodingGlossService()
+    failing_client = TestClient(application, raise_server_exceptions=False)
+
+    response = failing_client.post(
+        "/v1/gloss/normalize",
+        json=payload(),
+        headers={"X-Request-ID": "req-internal"},
+    )
+
+    assert_error(
+        response,
+        status_code=500,
+        code="INTERNAL_ERROR",
+        message="An internal error occurred.",
+        request_id="req-internal",
+    )
+    assert "provider URL" not in response.text
+    assert "secret" not in response.text
+
+
+def test_method_not_allowed_uses_shared_error_and_preserves_allow_header() -> None:
+    response = client.get(
+        "/v1/gloss/normalize",
+        headers={"X-Request-ID": "req-method"},
+    )
+
+    assert_error(
+        response,
+        status_code=405,
+        code="METHOD_NOT_ALLOWED",
+        message="Method not allowed.",
+        request_id="req-method",
+    )
+    assert response.headers["Allow"] == "POST"
+
+
 def test_qwen_mode_without_token_installs_service_without_provider() -> None:
     application = create_app(Settings(gloss_mode="qwen", hf_token=None))
 
