@@ -251,6 +251,72 @@ def test_configured_internal_key_is_checked_before_malformed_json(
     )
 
 
+@pytest.mark.parametrize("provided_key", [None, "wrong"])
+def test_root_path_gloss_route_rejects_missing_or_wrong_key(
+    provided_key: str | None,
+) -> None:
+    protected_client = TestClient(
+        create_app(Settings(gloss_mode="template", internal_api_key="secret")),
+        root_path="/prefix",
+    )
+    headers = {"X-Request-ID": "req-root-auth"}
+    if provided_key is not None:
+        headers["X-Internal-API-Key"] = provided_key
+
+    response = protected_client.post(
+        "/prefix/v1/gloss/normalize",
+        json=payload(),
+        headers=headers,
+    )
+
+    assert_error(
+        response,
+        status_code=401,
+        code="UNAUTHORIZED",
+        message="Authentication is required.",
+        request_id="req-root-auth",
+    )
+
+
+def test_root_path_gloss_route_accepts_correct_key() -> None:
+    protected_client = TestClient(
+        create_app(Settings(gloss_mode="template", internal_api_key="secret")),
+        root_path="/prefix",
+    )
+
+    response = protected_client.post(
+        "/prefix/v1/gloss/normalize",
+        json=payload(),
+        headers={"X-Internal-API-Key": "secret"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_root_path_gloss_auth_precedes_malformed_json_parsing() -> None:
+    protected_client = TestClient(
+        create_app(Settings(gloss_mode="template", internal_api_key="secret")),
+        root_path="/prefix",
+    )
+
+    response = protected_client.post(
+        "/prefix/v1/gloss/normalize",
+        content=b'{"utteranceId":',
+        headers={
+            "Content-Type": "application/json",
+            "X-Request-ID": "req-root-malformed",
+        },
+    )
+
+    assert_error(
+        response,
+        status_code=401,
+        code="UNAUTHORIZED",
+        message="Authentication is required.",
+        request_id="req-root-malformed",
+    )
+
+
 def test_non_ascii_internal_key_is_safely_rejected() -> None:
     protected_client = TestClient(
         create_app(Settings(gloss_mode="template", internal_api_key="secret")),

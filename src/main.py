@@ -24,6 +24,18 @@ from src.shared.providers.huggingface import HuggingFaceChatProvider
 logger = get_logger(__name__)
 
 
+def _canonical_request_path(request: Request) -> str:
+    path = request.scope["path"]
+    root_path = request.scope.get("root_path", "").rstrip("/")
+    if not root_path:
+        return path
+    if path == root_path:
+        return "/"
+    if path.startswith(f"{root_path}/"):
+        return path[len(root_path) :]
+    return path
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     configure_logging(resolved.log_level)
@@ -50,7 +62,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         configured_key = resolved.internal_api_key
         is_gloss_normalize = (
-            request.method == "POST" and request.url.path == "/v1/gloss/normalize"
+            request.method == "POST"
+            and _canonical_request_path(request) == "/v1/gloss/normalize"
         )
         if configured_key is not None and is_gloss_normalize:
             expected = configured_key.get_secret_value().encode("utf-8")
