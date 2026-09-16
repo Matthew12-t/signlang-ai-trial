@@ -1,7 +1,7 @@
 # Gloss Normalization and Conversation Recall Services Design
 
-**Status:** Approved design  
-**Date:** 2026-09-17  
+**Status:** Approved design
+**Date:** 2026-09-17
 **Scope:** Isyara AI Services MVP
 
 ## 1. Goals

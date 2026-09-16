@@ -27,5 +27,6 @@ packages = ["src"]
 [tool.pytest.ini_options]
 addopts = "-q"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = ["smoke: calls an external provider and consumes hosted inference credit"]
