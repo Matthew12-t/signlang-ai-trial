@@ -1,0 +1,299 @@
+openapi: 3.1.0
+info:
+  title: Isyara Sign Language Service API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Internal REST contract for word-level isolated sign prediction. This service
+    is stateless and may only be called by the Isyara Application Server.
+servers:
+  - url: /
+    description: Current Sign Language Service origin
+security:
+  - InternalApiKey: []
+tags:
+  - name: Health
+    description: Process and model readiness.
+  - name: Sign
+    description: Word-level isolated sign prediction.
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getSignServiceLiveness
+      summary: Check process liveness.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getSignServiceReadiness
+      summary: Check model, device, vocabulary, and warm-up readiness.
+      security: []
+      responses:
+        "200":
+          description: Service is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/sign/predict:
+    post:
+      tags: [Sign]
+      operationId: predictIsolatedSign
+      summary: Predict one isolated sign from one short video clip.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [video, topK, vocabularyVersion]
+              properties:
+                video:
+                  type: string
+                  format: binary
+                  description: One WebM or MP4 clip containing one isolated sign.
+                topK:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  default: 3
+                vocabularyVersion:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+            encoding:
+              video:
+                contentType: video/webm, video/mp4
+      responses:
+        "200":
+          description: |
+            Prediction completed. UNKNOWN, NO_SIGN, and model-level INVALID_INPUT
+            are successful responses represented by the status field.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignPredictionResponse"
+              examples:
+                confident:
+                  summary: Confident prediction
+                  value:
+                    requestId: c946f42d-474e-40f4-a6d9-b0eb75f05a9a
+                    predictionId: pred_01J8Y7RK2F
+                    prediction: REPEAT
+                    confidence: 0.86
+                    candidates:
+                      - label: REPEAT
+                        confidence: 0.86
+                      - label: AGAIN
+                        confidence: 0.09
+                      - label: UNDERSTAND
+                        confidence: 0.03
+                    status: CONFIDENT
+                    requiresConfirmation: false
+                    modelVersion: signbart-mvp-v1
+                    vocabularyVersion: mvp-en-v1
+                    latencyMs: 184
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+components:
+  securitySchemes:
+    InternalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: true
+      description: Application Server generated UUID used for correlation.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          enum: [alive, ready, not_ready]
+        service:
+          type: string
+          const: sign-language
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+    SignCandidate:
+      type: object
+      additionalProperties: false
+      required: [label, confidence]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+    SignPredictionStatus:
+      type: string
+      enum: [CONFIDENT, AMBIGUOUS, UNKNOWN, INVALID_INPUT, NO_SIGN]
+    SignPredictionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - predictionId
+        - prediction
+        - confidence
+        - candidates
+        - status
+        - requiresConfirmation
+        - modelVersion
+        - vocabularyVersion
+        - latencyMs
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        predictionId:
+          type: string
+          minLength: 1
+        prediction:
+          type: [string, "null"]
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        candidates:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/SignCandidate"
+        status:
+          $ref: "#/components/schemas/SignPredictionStatus"
+        requiresConfirmation:
+          type: boolean
+        modelVersion:
+          type: string
+          minLength: 1
+        vocabularyVersion:
+          type: string
+          minLength: 1
+        latencyMs:
+          type: integer
+          minimum: 0
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable, requestId, details]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+            requestId:
+              type: string
+              format: uuid
+            details:
+              type: object
+              additionalProperties: true
+  responses:
+    BadRequest:
+      description: Request fields or headers are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Unauthorized:
+      description: Internal API key is missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    PayloadTooLarge:
+      description: Video exceeds the configured byte or duration limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnsupportedMediaType:
+      description: Video content type or container is unsupported.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnprocessableEntity:
+      description: Vocabulary version does not match the loaded model.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    RateLimited:
+      description: GPU inference queue is full.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    InternalError:
+      description: Unexpected inference failure.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    ServiceUnavailable:
+      description: Model, vocabulary, or GPU is not ready.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    GatewayTimeout:
+      description: Inference exceeded the configured deadline.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
