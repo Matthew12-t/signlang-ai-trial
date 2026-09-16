@@ -1,2 +1,54 @@
-"""Shared data models."""
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class APIModel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True)
+
+
+class ChatMessage(APIModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ConfirmedSignToken(APIModel):
+    id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=128)
+    confirmed_at: datetime = Field(alias="confirmedAt")
+
+    @field_validator("label")
+    @classmethod
+    def reject_blank_label(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("label must not be blank")
+        return value
+
+
+class GlossNormalizeRequest(APIModel):
+    utterance_id: str = Field(alias="utteranceId", min_length=1, max_length=128)
+    language: str
+    tokens: list[ConfirmedSignToken] = Field(min_length=1)
+
+
+class GlossNormalizeResponse(APIModel):
+    request_id: str = Field(alias="requestId")
+    utterance_id: str = Field(alias="utteranceId")
+    text: str
+    method: Literal["template", "qwen"]
+    source_token_ids: list[str] = Field(alias="sourceTokenIds")
+    warnings: list[str]
+    latency_ms: int = Field(alias="latencyMs", ge=0)
+
+
+class LLMGlossResult(APIModel):
+    text: str = Field(min_length=1, max_length=500)
+    source_token_ids: list[str] = Field(alias="sourceTokenIds")
+
+
+class RuleNormalization(APIModel):
+    text: str
+    source_token_ids: list[str] = Field(alias="sourceTokenIds")
+    warnings: list[str]
 
