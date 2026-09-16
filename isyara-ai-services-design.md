@@ -1,0 +1,772 @@
+# Isyara AI Services — Design and API Contract
+
+Status: Draft v0.1  
+Target: MVP Hackathon IFEST 2026  
+Audience: tim software engineering dan tim AI  
+Bahasa demo awal: Inggris
+
+## 1. Tujuan
+
+Dokumen ini menetapkan batas tanggung jawab, kontrak data, fungsi inti, API, alur real-time, kebijakan timeout, dan perilaku kegagalan untuk layanan AI Isyara.
+
+Prinsip utamanya:
+
+- Frontend hanya berkomunikasi dengan Application API, kecuali koneksi lokal ke Sign Service yang memang diperlukan untuk demo.
+- Token Hugging Face hanya berada di server.
+- Application API menjadi sumber kebenaran untuk session, utterance, dan transcript.
+- Layanan AI dibuat stateless sejauh memungkinkan.
+- Model dan provider dipilih melalui konfigurasi, bukan di-hardcode dalam UI.
+- Hanya transcript final dan token sign yang telah dikonfirmasi yang boleh menjadi sumber Conversation Recall.
+- Recall harus menampilkan evidence atau menyatakan bahwa informasi tidak ditemukan.
+
+## 2. Keputusan Arsitektur
+
+### 2.1 Batas repository dan deployment
+
+| Komponen | Pemilik | Lokasi eksekusi | Tanggung jawab |
+|---|---|---|---|
+| Web Client | repo software engineering | browser | kamera, mikrofon, UI caption, konfirmasi sign, kontrol session, Recall |
+| Application API | repo software engineering | server aplikasi | session, transcript store, orkestrasi, autentikasi, kontrak publik |
+| STT Service | repo AI services | server AI | adapter ASR Hugging Face, chunking, hasil provisional/final |
+| TTS Service | repo AI services | server AI | adapter TTS Hugging Face, audio hasil sintesis |
+| Recall Service | repo AI services | server AI | prompt Qwen, keluaran terstruktur, validasi awal |
+| Gloss Service | repo AI services | server AI | merapikan rangkaian token sign menjadi teks; bukan Conversation Recall |
+| Sign Service | repo AI/sign terpisah | laptop RTX 3060 | SignBart, temporal aggregation, top-k, status confidence |
+
+Sign Service lokal hanya bind ke `127.0.0.1`. STT, TTS, Recall, dan Gloss dapat berada dalam satu proses FastAPI untuk demo, tetapi harus tetap dipisahkan sebagai modul dan router agar dapat dipecah menjadi deployment terpisah tanpa mengubah kontrak.
+
+### 2.2 Diagram komponen
+
+```mermaid
+flowchart LR
+    UI[Web Client] -->|HTTPS / WebSocket| APP[Application API]
+    UI -->|WS localhost, frame/landmark| SIGN[Local Sign Service\nSignBart + Confidence]
+    SIGN -->|prediction events| UI
+
+    APP -->|audio chunk/batch| STT[STT Service]
+    APP -->|confirmed text| TTS[TTS Service]
+    APP -->|confirmed sign tokens| GLOSS[Gloss Service]
+    APP -->|question + bounded transcript| RECALL[Recall Service]
+
+    STT --> HFSTT[Hugging Face ASR]
+    TTS --> HFTTS[Hugging Face TTS]
+    RECALL --> QWEN[Qwen via Hugging Face]
+
+    APP --> STORE[(Transcript Store)]
+```
+
+### 2.3 Source of truth
+
+Application API menyimpan:
+
+- metadata session;
+- transcript final dari STT;
+- token sign yang telah dikonfirmasi;
+- utterance sign yang telah difinalisasi;
+- pertanyaan dan hasil Recall bila diperlukan untuk UI session;
+- timestamp dan source setiap entry.
+
+AI services tidak menyimpan riwayat meeting. Recall Service menerima konteks eksplisit pada setiap request. Konsekuensinya, retry bersifat aman, debugging lebih mudah, dan tidak ada sinkronisasi session tersembunyi antar-repo.
+
+## 3. Alur Utama
+
+### 3.1 Speech-to-Text
+
+```text
+Frontend          Application API        STT Service          HF ASR
+   | start STT           |                    |                  |
+   |-------------------->| open stream        |                  |
+   | audio frames        |------------------->| rolling buffer   |
+   |                     |                    |----------------->|
+   |                     | provisional text  |<-----------------|
+   | partial caption     |<-------------------|                  |
+   |<--------------------|                    |                  |
+   | stop/commit         |------------------->| final decode     |
+   |                     | final transcript  |<-----------------|
+   |                     |<-------------------|                  |
+   |                     | persist final      |                  |
+   | final caption       |                    |                  |
+   |<--------------------|                    |                  |
+```
+
+Catatan penting: antarmuka ASR `InferenceClient.automatic_speech_recognition` menerima audio sebagai satu request. Karena itu, `partial` pada MVP adalah hasil **provisional** dari rolling chunk yang dibuat STT Service, bukan token streaming native dari model. Partial boleh berubah dan tidak disimpan. Hanya event `final` yang masuk Transcript Store.
+
+Konfigurasi awal untuk demo:
+
+- PCM signed 16-bit little-endian, mono, 16 kHz;
+- rolling chunk 1.5–2 detik;
+- overlap 250–400 ms;
+- commit ketika tombol Stop ditekan atau voice activity timeout tercapai;
+- deduplikasi overlap sebelum final disimpan.
+
+### 3.2 Sign-to-Text per utterance
+
+```text
+1. Frontend memanggil Create Utterance pada Application API.
+2. Frontend membuka Sign Service lokal dengan utteranceId tersebut.
+3. Kamera mengirim frame/landmark selama tombol Start Sign aktif.
+4. Sign Service menghasilkan prediction event: top-k, confidence, temporal status.
+5. Untuk CONFIDENT, UI dapat menawarkan Accept; untuk AMBIGUOUS, UI wajib meminta pilihan.
+6. Setelah pengguna mengonfirmasi, frontend mengirim confirmed token ke Application API.
+7. Token langsung ditampilkan sebagai live sign transcript.
+8. Saat Stop Sign ditekan, frontend meminta Application API memfinalisasi utterance.
+9. Application API mengirim seluruh confirmed token pada range tersebut ke Gloss Service.
+10. Teks hasil normalisasi disimpan sebagai satu transcript entry dengan source=sign.
+11. Teks final dapat dikirim ke TTS Service hanya setelah pengguna memilih Speak.
+```
+
+`prediction` bukan transcript. Hanya token berstatus `confirmed` yang boleh dikirim ke Gloss Service, TTS, atau Recall.
+
+### 3.3 Conversation Recall dengan Qwen via Hugging Face
+
+```text
+Frontend         Application API       Transcript Store      Recall Service       Qwen/HF
+   | question           |                      |                    |                 |
+   |------------------->| load bounded range   |                    |                 |
+   |                    |--------------------->|                    |                 |
+   |                    | normalized entries   |                    |                 |
+   |                    |<---------------------|                    |                 |
+   |                    | question + context entries              |                 |
+   |                    |------------------------------------------>| chat completion |
+   |                    |                                           |--------------->|
+   |                    |                                           | structured JSON|
+   |                    |                                           |<---------------|
+   |                    | answer + evidence                          |                 |
+   |                    |<------------------------------------------|                 |
+   |                    | validate evidence IDs and quotes          |                 |
+   | answer + evidence  |                                           |                 |
+   |<-------------------|                                           |                 |
+```
+
+Kata-kata yang dikirim ke Qwen bukan daftar lepas tanpa asal. Application API mengirim `contextEntries` yang sudah dikelompokkan sebagai transcript final, diurutkan berdasarkan waktu, dan dilengkapi `entryId`, `source`, `speaker`, serta timestamp. Token sign dalam utterance baru masuk konteks setelah dikonfirmasi dan difinalisasi.
+
+Untuk MVP, Application API memilih konteks dengan urutan berikut:
+
+1. range yang dipilih pengguna, jika ada;
+2. lima menit terakhir sebelum pertanyaan;
+3. potong entry tertua jika melebihi batas karakter/token;
+4. pertahankan entry secara utuh agar evidence dapat diverifikasi.
+
+Tidak diperlukan vector database untuk demo. Jika pertanyaan meminta “dua menit terakhir”, Application API menangani pemilihan waktu; Qwen hanya merangkum konteks terpilih.
+
+## 4. Kontrak HTTP Internal
+
+Semua endpoint internal menggunakan prefix `/v1`. Spesifikasi mesin terdapat di `isyara-ai-services-openapi.yaml`.
+
+### 4.1 Header umum
+
+| Header | Wajib | Keterangan |
+|---|---:|---|
+| `X-Internal-API-Key` | ya di non-local | autentikasi antarlayanan |
+| `X-Request-ID` | ya | UUID untuk korelasi log; dibuat pemanggil |
+| `Idempotency-Key` | untuk TTS/Recall | mencegah pemrosesan ulang akibat retry |
+| `Content-Type` | ya | JSON, multipart, atau tipe audio yang sesuai |
+
+HF token tidak pernah diteruskan dari frontend atau Application API dalam request. Token dibaca oleh masing-masing service dari secret environment.
+
+### 4.2 STT — `POST /v1/stt/transcriptions`
+
+Input: `multipart/form-data` dengan file audio dan metadata.
+
+```text
+audio: binary
+language: en
+encoding: wav | webm | flac
+timestamps: true
+```
+
+Response `200`:
+
+```json
+{
+  "requestId": "8bc31d53-7dd1-46d5-ae72-d78d83aa1dcf",
+  "text": "The deadline is Friday at five.",
+  "language": "en",
+  "segments": [
+    {
+      "text": "The deadline is Friday at five.",
+      "startMs": 0,
+      "endMs": 2140
+    }
+  ],
+  "model": {
+    "provider": "huggingface",
+    "id": "configured-at-runtime"
+  },
+  "latencyMs": 682
+}
+```
+
+Endpoint batch ini juga menjadi primitive yang dipakai implementasi rolling chunk WebSocket.
+
+### 4.3 TTS — `POST /v1/tts/synthesize`
+
+Request:
+
+```json
+{
+  "text": "Could you repeat that, please?",
+  "language": "en",
+  "voice": null,
+  "format": "wav"
+}
+```
+
+Response `200`: body biner `audio/wav`, dengan header:
+
+- `X-Request-ID`;
+- `X-Model-ID`;
+- `X-Latency-Ms`.
+
+Teks maksimum MVP: 500 karakter. Kegagalan TTS tidak menghapus teks dan tidak menggagalkan utterance. Jika provider mengembalikan format yang berbeda, TTS Service wajib menormalisasi atau mentranskode audio ke format yang diminta sebelum mengirim response.
+
+### 4.4 Gloss normalization — `POST /v1/gloss/normalize`
+
+Endpoint ini merapikan confirmed sign tokens setelah Stop Sign. Endpoint ini tidak menjawab pertanyaan tentang percakapan.
+
+Request:
+
+```json
+{
+  "utteranceId": "utt_01J8Y7M2X9",
+  "language": "en",
+  "tokens": [
+    {"id": "tok_1", "label": "I", "confirmedAt": "2026-09-18T10:15:20Z"},
+    {"id": "tok_2", "label": "NOT_UNDERSTAND", "confirmedAt": "2026-09-18T10:15:22Z"}
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "requestId": "a5de6361-aedf-4e99-961e-d3f66def3768",
+  "utteranceId": "utt_01J8Y7M2X9",
+  "text": "I do not understand.",
+  "method": "template",
+  "sourceTokenIds": ["tok_1", "tok_2"],
+  "warnings": [],
+  "latencyMs": 3
+}
+```
+
+Untuk vocabulary 10–20 sign, gunakan rule/template deterministik terlebih dahulu. Mode LLM untuk endpoint ini boleh menjadi feature flag, tetapi tidak boleh mengubah atau menambah fakta.
+
+### 4.5 Recall — `POST /v1/recall/query`
+
+Request:
+
+```json
+{
+  "sessionId": "ses_01J8Y6Z4Q1",
+  "query": "When is the deadline?",
+  "language": "en",
+  "contextEntries": [
+    {
+      "id": "tr_17",
+      "sequence": 17,
+      "source": "speech",
+      "speaker": "Participant",
+      "text": "The submission deadline is Friday at five PM.",
+      "startedAt": "2026-09-18T10:18:11Z",
+      "endedAt": "2026-09-18T10:18:14Z"
+    }
+  ],
+  "options": {
+    "maxAnswerTokens": 160,
+    "requireEvidence": true
+  }
+}
+```
+
+Response ketika ditemukan:
+
+```json
+{
+  "requestId": "2ea7578d-ac07-4e49-9db4-83b4a233c13f",
+  "answer": "The deadline is Friday at 5 PM.",
+  "grounded": true,
+  "evidence": [
+    {
+      "entryId": "tr_17",
+      "quote": "The submission deadline is Friday at five PM.",
+      "startedAt": "2026-09-18T10:18:11Z"
+    }
+  ],
+  "notFoundReason": null,
+  "model": {
+    "provider": "huggingface",
+    "id": "configured-qwen-model"
+  },
+  "latencyMs": 1180
+}
+```
+
+Response ketika konteks tidak mendukung jawaban tetap menggunakan `200`:
+
+```json
+{
+  "requestId": "2ea7578d-ac07-4e49-9db4-83b4a233c13f",
+  "answer": "I could not find that information in the transcript.",
+  "grounded": false,
+  "evidence": [],
+  "notFoundReason": "NOT_IN_CONTEXT",
+  "model": {
+    "provider": "huggingface",
+    "id": "configured-qwen-model"
+  },
+  "latencyMs": 940
+}
+```
+
+`404` tidak digunakan untuk jawaban yang tidak ditemukan karena request berhasil diproses. Kode error HTTP dipakai untuk kegagalan teknis atau request tidak valid.
+
+## 5. Kontrak WebSocket
+
+### 5.1 STT stream
+
+Path internal:
+
+```text
+WS /v1/stt/streams/{streamId}
+```
+
+Pesan client pertama:
+
+```json
+{
+  "type": "start",
+  "sessionId": "ses_01J8Y6Z4Q1",
+  "audio": {
+    "encoding": "pcm_s16le",
+    "sampleRateHz": 16000,
+    "channels": 1
+  },
+  "language": "en"
+}
+```
+
+Setelah event `ready`, client mengirim binary audio frames. Control frame berbentuk JSON:
+
+```json
+{"type": "commit"}
+```
+
+```json
+{"type": "stop"}
+```
+
+Server events:
+
+```json
+{
+  "type": "partial",
+  "revision": 4,
+  "text": "the deadline is Friday",
+  "audioStartMs": 0,
+  "audioEndMs": 1800,
+  "isFinal": false
+}
+```
+
+```json
+{
+  "type": "final",
+  "revision": 5,
+  "text": "The deadline is Friday at five.",
+  "audioStartMs": 0,
+  "audioEndMs": 2410,
+  "isFinal": true
+}
+```
+
+Aturan:
+
+- `revision` selalu naik dalam satu stream;
+- partial dengan revision lama harus diganti, bukan ditambahkan;
+- final bersifat append-only;
+- client mengirim frame 20–100 ms agar buffer stabil;
+- server menutup stream setelah `stop`, final event, dan `closed` event;
+- maksimum satu stream STT aktif per session pada MVP.
+
+### 5.2 Local Sign stream
+
+Path lokal:
+
+```text
+WS ws://127.0.0.1:{SIGN_PORT}/v1/sign/streams/{utteranceId}
+```
+
+Pesan awal:
+
+```json
+{
+  "type": "start",
+  "vocabularyVersion": "mvp-en-v1",
+  "input": "landmarks",
+  "topK": 3
+}
+```
+
+Prediction event:
+
+```json
+{
+  "type": "prediction",
+  "predictionId": "pred_01J8Y7RK2F",
+  "label": "REPEAT",
+  "confidence": 0.86,
+  "candidates": [
+    {"label": "REPEAT", "confidence": 0.86},
+    {"label": "AGAIN", "confidence": 0.09},
+    {"label": "UNDERSTAND", "confidence": 0.03}
+  ],
+  "temporalConsistency": 0.91,
+  "status": "CONFIDENT",
+  "observedAt": "2026-09-18T10:15:22Z"
+}
+```
+
+Status valid:
+
+- `CONFIDENT`;
+- `AMBIGUOUS`;
+- `UNSTABLE`;
+- `UNKNOWN`;
+- `NO_SIGN`.
+
+Sign Service tidak menentukan apakah token telah diterima sebagai transcript. Keputusan `accept`, `choose candidate`, `retry`, atau `cancel` dilakukan di UI dan disimpan melalui Application API.
+
+## 6. Kontrak Application API yang Dibutuhkan Frontend
+
+Endpoint berikut dimiliki repo software engineering. Daftar ini menjadi dependency AI services, bukan implementasi di repo AI.
+
+| Method dan path | Fungsi |
+|---|---|
+| `POST /v1/sessions` | membuat session |
+| `POST /v1/sessions/{sessionId}/stt:start` | membuka STT stream yang telah diautentikasi |
+| `POST /v1/sessions/{sessionId}/stt:stop` | commit dan menutup STT stream |
+| `POST /v1/sessions/{sessionId}/utterances` | membuat range Start Sign |
+| `POST /v1/utterances/{utteranceId}/tokens` | menyimpan token sign terkonfirmasi |
+| `POST /v1/utterances/{utteranceId}:finalize` | Stop Sign, normalisasi, simpan transcript |
+| `POST /v1/utterances/{utteranceId}:speak` | sintesis teks final |
+| `POST /v1/sessions/{sessionId}/recall` | mengambil konteks lalu memanggil Recall Service |
+| `GET /v1/sessions/{sessionId}/transcript` | membaca transcript session |
+| `DELETE /v1/sessions/{sessionId}` | mengakhiri dan menghapus data session MVP |
+
+Frontend tidak perlu mengetahui `HF_RECALL_MODEL`, URL provider, atau bentuk prompt.
+
+## 7. Fungsi Inti di Repo AI
+
+Kontrak berikut ditulis sebagai pseudocode Python agar mudah diterjemahkan ke FastAPI/Pydantic.
+
+```python
+async def transcribe_audio(
+    audio: bytes,
+    *,
+    language: str,
+    encoding: str,
+    include_timestamps: bool,
+) -> TranscriptionResult: ...
+
+async def synthesize_speech(
+    text: str,
+    *,
+    language: str,
+    voice: str | None,
+    output_format: str,
+) -> AudioArtifact: ...
+
+async def normalize_gloss(
+    utterance_id: str,
+    tokens: list[ConfirmedSignToken],
+    *,
+    language: str,
+) -> NormalizedUtterance: ...
+
+async def answer_recall(
+    query: str,
+    context_entries: list[TranscriptEntry],
+    *,
+    language: str,
+    max_answer_tokens: int,
+) -> RecallAnswer: ...
+
+def build_recall_messages(
+    query: str,
+    context_entries: list[TranscriptEntry],
+    language: str,
+) -> list[ChatMessage]: ...
+
+def validate_recall_evidence(
+    answer: RecallAnswer,
+    context_entries: list[TranscriptEntry],
+) -> EvidenceValidationResult: ...
+```
+
+Adapter provider:
+
+```python
+class SpeechToTextProvider(Protocol):
+    async def transcribe(self, audio: bytes, options: STTOptions) -> ProviderTranscript: ...
+
+class TextToSpeechProvider(Protocol):
+    async def synthesize(self, text: str, options: TTSOptions) -> bytes: ...
+
+class ChatProvider(Protocol):
+    async def complete_json(self, messages: list[ChatMessage], schema: dict) -> dict: ...
+```
+
+Implementasi awal memakai Hugging Face, tetapi service layer hanya bergantung pada protocol tersebut.
+
+## 8. Prompt Contract Recall
+
+System instruction minimum:
+
+```text
+You answer only from the supplied transcript entries.
+If the answer is not explicitly supported, return grounded=false and no evidence.
+Do not use outside knowledge.
+Every evidence item must reference an existing entryId and quote text from that entry.
+Keep the answer concise and in the requested language.
+Return only JSON matching the supplied schema.
+```
+
+User content dikirim sebagai JSON, bukan string transcript gabungan tanpa struktur:
+
+```json
+{
+  "question": "When is the deadline?",
+  "language": "en",
+  "transcriptEntries": [
+    {
+      "entryId": "tr_17",
+      "source": "speech",
+      "speaker": "Participant",
+      "startedAt": "2026-09-18T10:18:11Z",
+      "text": "The submission deadline is Friday at five PM."
+    }
+  ]
+}
+```
+
+Inference settings awal:
+
+- `temperature = 0`;
+- `max_tokens = 160`;
+- non-thinking mode bila model mendukungnya;
+- JSON schema/structured output bila provider-model mendukung;
+- satu retry hanya untuk timeout, `429`, atau `5xx`;
+- tidak ada retry untuk request invalid.
+
+Validasi setelah respons Qwen wajib dilakukan:
+
+1. JSON sesuai schema;
+2. setiap `entryId` ada pada request;
+3. `quote` sama dengan atau merupakan normalized substring dari entry terkait;
+4. `grounded=true` wajib memiliki minimal satu evidence;
+5. jika validasi gagal, respons diubah menjadi `grounded=false` dengan `notFoundReason=EVIDENCE_VALIDATION_FAILED`.
+
+Qwen tidak dipercaya sebagai validator atas keluarannya sendiri.
+
+## 9. Error Contract
+
+Semua error JSON menggunakan bentuk yang sama:
+
+```json
+{
+  "error": {
+    "code": "HF_TIMEOUT",
+    "message": "The upstream inference provider did not respond in time.",
+    "retryable": true,
+    "requestId": "8bc31d53-7dd1-46d5-ae72-d78d83aa1dcf",
+    "details": {}
+  }
+}
+```
+
+Kode utama:
+
+| HTTP | Code | Retry | Makna |
+|---:|---|:---:|---|
+| 400 | `INVALID_REQUEST` | tidak | schema atau parameter salah |
+| 413 | `PAYLOAD_TOO_LARGE` | tidak | audio/konteks melewati batas |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | tidak | format audio tidak didukung |
+| 422 | `UNSUPPORTED_LANGUAGE` | tidak | bahasa belum tersedia |
+| 429 | `RATE_LIMITED` | ya | kuota/rate limit service atau provider |
+| 502 | `UPSTREAM_BAD_RESPONSE` | ya | response provider tidak dapat dipakai |
+| 503 | `MODEL_UNAVAILABLE` | ya | model belum siap/tidak tersedia |
+| 504 | `HF_TIMEOUT` | ya | provider melewati deadline |
+
+## 10. Timeout, Retry, dan Latency Budget
+
+Target ini merupakan budget demo, bukan SLA produksi.
+
+| Operasi | Target UI | Hard timeout service | Retry |
+|---|---:|---:|---:|
+| Sign prediction event | p95 < 300 ms setelah window siap | 1 s | 0 |
+| STT partial provisional | setiap 1.5–2.5 s | 6 s/chunk | 0 |
+| STT final | < 3 s setelah Stop | 10 s | 1 |
+| TTS audio | < 3 s | 12 s | 1 |
+| Recall | < 5 s | 15 s | 1 |
+| Gloss template | < 100 ms | 1 s | 0 |
+
+Semua retry memakai exponential backoff pendek dan deadline total. UI menampilkan state terpisah untuk kegagalan setiap fitur; STT atau TTS gagal tidak boleh mematikan Sign Service.
+
+## 11. Health dan Readiness
+
+Setiap service menyediakan:
+
+```text
+GET /health/live
+GET /health/ready
+```
+
+`live` hanya memeriksa proses. `ready` memeriksa konfigurasi, akses provider, dan ketersediaan model bila pengecekan tersebut murah.
+
+Contoh readiness:
+
+```json
+{
+  "status": "ready",
+  "service": "recall",
+  "checks": {
+    "configuration": "ok",
+    "huggingFace": "ok",
+    "model": "Qwen model configured"
+  }
+}
+```
+
+Daftar model yang benar-benar dirutekan oleh Hugging Face dapat berubah. Karena itu, service memvalidasi model pada startup/readiness dan gagal dengan jelas, bukan memilih model berbeda secara diam-diam.
+
+## 12. Environment Variables
+
+```dotenv
+# Shared
+INTERNAL_API_KEY=
+LOG_LEVEL=INFO
+REQUEST_TIMEOUT_SECONDS=15
+
+# Hugging Face
+HF_TOKEN=
+HF_PROVIDER=auto
+
+# STT
+HF_STT_MODEL=openai/whisper-large-v3-turbo
+STT_LANGUAGE=en
+STT_PARTIAL_MODE=rolling_chunk
+STT_CHUNK_MS=1800
+STT_OVERLAP_MS=300
+
+# TTS
+HF_TTS_MODEL=hexgrad/Kokoro-82M
+HF_TTS_PROVIDER=replicate
+TTS_OUTPUT_FORMAT=wav
+
+# Recall
+HF_RECALL_MODEL=Qwen/Qwen3-8B
+RECALL_MAX_CONTEXT_CHARS=24000
+RECALL_MAX_ANSWER_TOKENS=160
+RECALL_TEMPERATURE=0
+
+# Local Sign Service
+SIGN_HOST=127.0.0.1
+SIGN_PORT=8765
+SIGN_MODEL_PATH=
+SIGN_VOCABULARY_PATH=
+```
+
+Nilai model di atas adalah kandidat awal, bukan bagian permanen dari kontrak. Model TTS/provider perlu dipilih melalui smoke test karena dukungan provider berbeda per task dan dapat berubah.
+
+## 13. Observability dan Privasi
+
+Log minimum per request:
+
+- `requestId`;
+- nama service dan operasi;
+- model ID dan provider;
+- latency total dan upstream;
+- status HTTP/error code;
+- ukuran audio atau jumlah context entry;
+- jumlah token input/output jika tersedia.
+
+Jangan log:
+
+- `HF_TOKEN` atau internal API key;
+- audio mentah;
+- frame kamera;
+- transcript lengkap secara default.
+
+Untuk demo, log isi transcript hanya boleh melalui flag debug eksplisit dan harus dimatikan sebelum repository dipublikasikan.
+
+## 14. Struktur Repo AI yang Disarankan
+
+```text
+ai-services/
+├─ contracts/
+│  └─ openapi.yaml
+├─ src/
+│  ├─ shared/
+│  │  ├─ config.py
+│  │  ├─ errors.py
+│  │  ├─ models.py
+│  │  ├─ observability.py
+│  │  └─ providers/
+│  │     └─ huggingface.py
+│  ├─ stt/
+│  │  ├─ api.py
+│  │  ├─ service.py
+│  │  └─ stream.py
+│  ├─ tts/
+│  │  ├─ api.py
+│  │  └─ service.py
+│  ├─ gloss/
+│  │  ├─ api.py
+│  │  └─ service.py
+│  └─ recall/
+│     ├─ api.py
+│     ├─ prompt.py
+│     ├─ service.py
+│     └─ validation.py
+├─ tests/
+│  ├─ contract/
+│  ├─ unit/
+│  └─ smoke/
+├─ .env.example
+└─ README.md
+```
+
+SignBart tetap berada di repo/deployment lokal terpisah agar dependency CUDA dan model vision tidak membebani service server.
+
+## 15. Acceptance Criteria Kontrak
+
+- OpenAPI dapat dipakai tim software engineering untuk membuat mock client tanpa menjalankan model.
+- Semua response menyertakan atau memantulkan `requestId`.
+- Frontend tidak memiliki HF token.
+- Partial STT tidak pernah disimpan sebagai transcript final.
+- Stop Sign hanya memproses token yang telah dikonfirmasi.
+- Recall request selalu membawa pertanyaan dan context entries eksplisit.
+- Recall tidak mengembalikan `grounded=true` tanpa evidence yang lolos validasi.
+- TTS hanya menerima teks yang telah dikonfirmasi/final.
+- Semua model ID dapat diganti melalui environment variable.
+- Kegagalan satu service menghasilkan error terisolasi dan tidak membuat session hilang.
+
+## 16. Urutan Implementasi MVP
+
+1. Bekukan schema OpenAPI dan buat mock response.
+2. Implementasikan Transcript Store dan endpoint Application API.
+3. Implementasikan Gloss Service berbasis template.
+4. Implementasikan STT batch, lalu adapter rolling-chunk WebSocket.
+5. Implementasikan TTS dan fallback text-only.
+6. Implementasikan Recall Qwen + structured output + evidence validator.
+7. Hubungkan Local Sign Service dan alur confirmation.
+8. Jalankan smoke test end-to-end untuk skenario demo.
+
+## 17. Rujukan Implementasi
+
+- Hugging Face Inference Providers menyediakan routing provider dan `InferenceClient`: https://huggingface.co/docs/inference-providers/en/index
+- Chat completion dapat diakses melalui API kompatibel OpenAI/Inference Client: https://huggingface.co/docs/inference-providers/tasks/chat-completion
+- Referensi `InferenceClient`, termasuk ASR dan TTS: https://huggingface.co/docs/huggingface_hub/package_reference/inference_client
+- Model Qwen yang tersedia harus diperiksa saat implementasi: https://huggingface.co/Qwen
