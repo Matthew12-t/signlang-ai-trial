@@ -58,17 +58,39 @@ A successful response has this shape:
 Set `INTERNAL_API_KEY` to require the optional `X-Internal-API-Key` header on the gloss
 endpoint. Do not place a real API key or Hugging Face token in repository files.
 
+Request-schema failures use the shared `400 INVALID_REQUEST` envelope, unsupported
+languages use `422 UNSUPPORTED_LANGUAGE`, and requests above `GLOSS_MAX_TOKENS` use
+`413 PAYLOAD_TOO_LARGE`. Every success and error response includes `X-Request-ID`.
+Token labels must contain at least one Unicode letter or digit. Deterministic fallback
+replaces underscores with spaces but preserves meaningful punctuation and Unicode, so
+unsupported labels such as `C++` and `Café` are not silently erased.
+
 ## Gloss modes and Hugging Face
 
 `GLOSS_MODE=template` is the default. It uses deterministic rules for known token
 patterns and produces an `UNMATCHED_TEMPLATE` warning when no rule matches. It never
 calls Hugging Face.
 
-`GLOSS_MODE=qwen` sends normalized token labels to `LLM_MODEL` (default
+`GLOSS_MODE=qwen` sends the confirmed token labels without destructive canonicalization
+to `LLM_MODEL` (default
 `Qwen/Qwen3-4B`) through Hugging Face. It requires `HF_TOKEN` with inference permission;
 `HF_PROVIDER=auto` selects an available provider. Hugging Face serverless/Inference
 Providers free-tier credit is limited, not permanently free, and provider/model
 availability can change.
+
+The provider prompt always includes the exact response JSON Schema and a compact valid
+object example. `HF_USE_STRUCTURED_OUTPUT=true` additionally sends that schema through
+the provider-native `response_format` option when the selected provider supports it.
+Empty or whitespace-only `HF_TOKEN` values are treated as absent.
+
+Hosted output is accepted only after local schema, provenance, and text validation.
+Text must be non-empty printable ASCII, contain an English word signal related to the
+input or the service's small common-English vocabulary, avoid high-confidence foreign
+phrases such as `Terima kasih`, and use a conservative plain-text punctuation set.
+This lightweight check is intentionally not a general language detector: uncommon but
+valid English can be rejected, while every uncertain result safely returns the
+deterministic template with `LLM_FALLBACK_INVALID_RESPONSE`. Non-ASCII deterministic
+fallback remains supported; the ASCII restriction applies only to hosted model output.
 
 Qwen-mode fallback warnings are deliberately stable:
 
@@ -89,6 +111,10 @@ the provider only when both `RUN_HF_SMOKE=1` and `HF_TOKEN` are present:
 ```bash
 RUN_HF_SMOKE=1 HF_TOKEN=your_token python -m pytest -m smoke
 ```
+
+The smoke test passes only when the service accepts an actual `method=qwen` result with
+unchanged provenance and no fallback warning. A deterministic fallback is a smoke-test
+failure because it does not establish live model/provider compatibility.
 
 See `.env.example` for the complete configuration reference, including shared STT, TTS,
 Recall, and local sign-service settings.

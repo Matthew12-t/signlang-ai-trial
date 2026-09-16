@@ -15,7 +15,7 @@ EXACT_TEMPLATES: dict[tuple[str, ...], str] = {
 
 
 def canonicalize_label(label: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "_", label.strip().upper()).strip("_")
+    return re.sub(r"[\s_-]+", "_", label.strip().upper()).strip("_")
 
 
 def normalize_with_rules(tokens: list[ConfirmedSignToken]) -> RuleNormalization:
@@ -25,7 +25,11 @@ def normalize_with_rules(tokens: list[ConfirmedSignToken]) -> RuleNormalization:
     if exact is not None:
         return RuleNormalization(text=exact, sourceTokenIds=source_ids, warnings=[])
 
-    words = " ".join(label.replace("_", " ").lower() for label in labels).strip()
+    preserved_labels = [
+        re.sub(r"\s+", " ", token.label.strip().replace("_", " ")).lower()
+        for token in tokens
+    ]
+    words = " ".join(preserved_labels).strip()
     text = f"{words[:1].upper()}{words[1:]}."
     return RuleNormalization(
         text=text,

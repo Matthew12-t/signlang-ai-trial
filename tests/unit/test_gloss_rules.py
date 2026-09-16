@@ -38,6 +38,28 @@ def test_unmatched_input_is_preserved_and_warned() -> None:
     assert result.warnings == ["UNMATCHED_TEMPLATE"]
 
 
+def test_unmatched_labels_preserve_meaningful_punctuation_and_unicode() -> None:
+    result = normalize_with_rules([token("1", "C++"), token("2", "Café")])
+
+    assert result.text == "C++ café."
+    assert result.source_token_ids == ["1", "2"]
+    assert result.warnings == ["UNMATCHED_TEMPLATE"]
+
+
+def test_meaningful_punctuation_cannot_accidentally_select_an_exact_template() -> None:
+    result = normalize_with_rules([token("1", "NO++")])
+
+    assert result.text == "No++."
+    assert result.source_token_ids == ["1"]
+    assert result.warnings == ["UNMATCHED_TEMPLATE"]
+
+
+@pytest.mark.parametrize("label", ["___", "???", "--", "  _?  "])
+def test_token_label_requires_usable_alphanumeric_content(label: str) -> None:
+    with pytest.raises(ValidationError):
+        token("1", label)
+
+
 def test_request_rejects_unsupported_language() -> None:
     with pytest.raises(ValidationError):
         GlossNormalizeRequest(

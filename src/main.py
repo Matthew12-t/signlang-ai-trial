@@ -1,8 +1,9 @@
 import hmac
 from collections.abc import Awaitable, Callable
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -22,6 +23,17 @@ from src.shared.providers.huggingface import HuggingFaceChatProvider
 
 
 logger = get_logger(__name__)
+
+_health_responses = {
+    200: {
+        "headers": {
+            "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {"type": "string"},
+            }
+        }
+    }
+}
 
 
 def _canonical_request_path(request: Request) -> str:
@@ -101,12 +113,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_exception_handler(StarletteHTTPException, http_exception_handler)
     application.include_router(gloss_router)
 
-    @application.get("/health/live")
-    async def live() -> dict[str, str]:
+    @application.get("/health/live", responses=_health_responses)
+    async def live(
+        _request_id: Annotated[
+            str | None,
+            Header(
+                alias="X-Request-ID",
+                description="Optional request ID; invalid values are replaced with a UUID.",
+            ),
+        ] = None,
+    ) -> dict[str, str]:
         return {"status": "ok", "service": "isyara-ai-services"}
 
-    @application.get("/health/ready")
-    async def ready() -> dict[str, object]:
+    @application.get("/health/ready", responses=_health_responses)
+    async def ready(
+        _request_id: Annotated[
+            str | None,
+            Header(
+                alias="X-Request-ID",
+                description="Optional request ID; invalid values are replaced with a UUID.",
+            ),
+        ] = None,
+    ) -> dict[str, object]:
         llm_ready = resolved.hf_token is not None
         gloss_status = "ready"
         status = "ready"

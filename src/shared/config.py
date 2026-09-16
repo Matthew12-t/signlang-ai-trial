@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     gloss_mode: Literal["template", "qwen"] = "template"
     gloss_max_tokens: int = 64
     gloss_llm_max_output_tokens: int = 96
+
+    @field_validator("hf_token", mode="before")
+    @classmethod
+    def normalize_blank_hf_token(cls, value: object) -> object:
+        raw_value = value.get_secret_value() if isinstance(value, SecretStr) else value
+        if isinstance(raw_value, str) and not raw_value.strip():
+            return None
+        return value
 
 
 @lru_cache

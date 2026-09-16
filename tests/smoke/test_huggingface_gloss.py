@@ -15,7 +15,8 @@ pytestmark = pytest.mark.smoke
 
 @pytest.mark.asyncio
 async def test_huggingface_normalizes_confirmed_thank_you_token() -> None:
-    if not (os.getenv("RUN_HF_SMOKE") == "1" and bool(os.getenv("HF_TOKEN"))):
+    hf_token = os.getenv("HF_TOKEN", "").strip()
+    if not (os.getenv("RUN_HF_SMOKE") == "1" and hf_token):
         pytest.skip("requires RUN_HF_SMOKE=1 and HF_TOKEN")
 
     settings = Settings(gloss_mode="qwen")
@@ -37,6 +38,5 @@ async def test_huggingface_normalizes_confirmed_thank_you_token() -> None:
 
     assert result.text
     assert result.source_token_ids == ["tok_smoke_1"]
-    assert result.method in {"qwen", "template"}
-    if result.method == "template":
-        assert any(warning.startswith("LLM_FALLBACK_") for warning in result.warnings)
+    assert result.method == "qwen"
+    assert result.warnings == []

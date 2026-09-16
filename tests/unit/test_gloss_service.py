@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from src.gloss.service import GlossService, GlossValidationError
@@ -127,6 +129,30 @@ async def test_pydantic_invalid_provider_output_falls_back() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_text",
+    [
+        "Terima kasih.",
+        "Café.",
+        "Thank\u200b you.",
+        "Thank\nyou.",
+        "12345.",
+        "<script>Thank you.</script>",
+    ],
+)
+async def test_unsafe_or_non_english_provider_text_falls_back(unsafe_text: str) -> None:
+    provider = FakeAsyncProvider({"text": unsafe_text, "sourceTokenIds": ["tok_1"]})
+
+    result = await GlossService(Settings(gloss_mode="qwen"), provider).normalize(
+        request("THANK_YOU")
+    )
+
+    assert result.text == "Thank you."
+    assert result.method == "template"
+    assert result.warnings == ["LLM_FALLBACK_INVALID_RESPONSE"]
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_falls_back_with_stable_warning() -> None:
     result = await GlossService(
         Settings(gloss_mode="qwen"), FakeAsyncProvider(ProviderRateLimited())
@@ -168,13 +194,18 @@ async def test_non_english_input_is_defensively_rejected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_receives_canonicalized_labels_without_confirmation_times() -> None:
-    provider = FakeAsyncProvider({"text": "I do not understand.", "sourceTokenIds": ["tok_1", "tok_2"]})
+async def test_provider_receives_lossless_labels_without_confirmation_times() -> None:
+    provider = FakeAsyncProvider({"text": "C++ café.", "sourceTokenIds": ["tok_1", "tok_2"]})
 
-    await GlossService(Settings(gloss_mode="qwen"), provider).normalize(request(" i ", "not-understand"))
+    await GlossService(Settings(gloss_mode="qwen"), provider).normalize(request(" C++ ", "Café"))
 
     assert provider.request is not None
-    assert provider.request["messages"][1].content == '{"tokens":[{"id":"tok_1","label":"I"},{"id":"tok_2","label":"NOT_UNDERSTAND"}]}'
+    assert json.loads(provider.request["messages"][1].content) == {
+        "tokens": [
+            {"id": "tok_1", "label": "C++"},
+            {"id": "tok_2", "label": "Café"},
+        ]
+    }
     assert "confirmedAt" not in provider.request["messages"][1].content
 
 
@@ -189,3 +220,16 @@ async def test_provider_uses_deterministic_settings_and_llm_schema() -> None:
     assert provider.request["temperature"] == 0
     assert provider.request["max_tokens"] == 73
     assert provider.request["response_schema"] == LLMGlossResult.model_json_schema(by_alias=True)
+
+
+@pytest.mark.asyncio
+async def test_default_provider_prompt_contains_exact_schema_and_valid_object_example() -> None:
+    provider = FakeAsyncProvider({"text": "Thank you.", "sourceTokenIds": ["tok_1"]})
+    expected_schema = LLMGlossResult.model_json_schema(by_alias=True)
+
+    await GlossService(Settings(gloss_mode="qwen"), provider).normalize(request("THANK_YOU"))
+
+    assert provider.request is not None
+    system_message = provider.request["messages"][0].content
+    assert f"Response JSON Schema: {json.dumps(expected_schema, separators=(',', ':'))}" in system_message
+    assert 'Valid response example: {"text":"Thank you.","sourceTokenIds":["tok_1"]}' in system_message

@@ -12,15 +12,41 @@
         ],
         "summary": "Normalize Gloss",
         "operationId": "normalize_gloss_v1_gloss_normalize_post",
+        "security": [
+          {
+            "InternalApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID; invalid values are replaced with a UUID."
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/GlossNormalizeRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -29,6 +55,136 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GlossNormalizeResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or parameters.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid configured internal API key.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request exceeds the configured token limit.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The requested language is unsupported.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "summary": "Live",
+        "operationId": "live_health_live_get",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID; invalid values are replaced with a UUID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Live Health Live Get"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -46,41 +202,57 @@
         }
       }
     },
-    "/health/live": {
-      "get": {
-        "summary": "Live",
-        "operationId": "live_health_live_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object",
-                  "title": "Response Live Health Live Get"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/health/ready": {
       "get": {
         "summary": "Ready",
         "operationId": "ready_health_ready_get",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID; invalid values are replaced with a UUID."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
+                  "additionalProperties": true,
                   "title": "Response Ready Health Ready Get"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -118,6 +290,52 @@
           "confirmedAt"
         ],
         "title": "ConfirmedSignToken"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "retryable": {
+            "type": "boolean",
+            "title": "Retryable"
+          },
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "requestId",
+          "details"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope"
       },
       "GlossNormalizeRequest": {
         "properties": {
@@ -255,6 +473,14 @@
           "type"
         ],
         "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "InternalApiKey": {
+        "type": "apiKey",
+        "description": "Required only when INTERNAL_API_KEY is configured.",
+        "in": "header",
+        "name": "X-Internal-API-Key"
       }
     }
   }

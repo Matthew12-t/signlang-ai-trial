@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import httpx
+import requests
 from huggingface_hub import InferenceClient
 
 from src.shared.config import Settings
@@ -71,7 +72,7 @@ class HuggingFaceChatProvider:
         try:
             response = await asyncio.to_thread(self._client.chat_completion, **request)
             parsed = json.loads(response.choices[0].message.content)
-        except (TimeoutError, httpx.TimeoutException):
+        except (TimeoutError, httpx.TimeoutException, requests.exceptions.Timeout):
             raise ProviderTimeout("Provider request timed out") from None
         except json.JSONDecodeError:
             raise ProviderBadResponse("Provider returned invalid JSON") from None

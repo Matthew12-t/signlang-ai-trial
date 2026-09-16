@@ -69,7 +69,7 @@ async def request_validation_error_handler(
             422,
         )
     else:
-        app_error = AppError("INVALID_REQUEST", "The request is invalid.", 422)
+        app_error = AppError("INVALID_REQUEST", "The request is invalid.", 400)
     return error_response(request, app_error)
 
 

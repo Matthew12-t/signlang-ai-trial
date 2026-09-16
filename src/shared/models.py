@@ -23,7 +23,21 @@ class ConfirmedSignToken(APIModel):
     def reject_blank_label(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("label must not be blank")
+        if not any(character.isalnum() for character in value):
+            raise ValueError("label must contain alphanumeric content")
         return value
+
+
+class ErrorDetail(APIModel):
+    code: str
+    message: str
+    retryable: bool
+    request_id: str = Field(alias="requestId")
+    details: dict[str, object]
+
+
+class ErrorEnvelope(APIModel):
+    error: ErrorDetail
 
 
 class GlossNormalizeRequest(APIModel):

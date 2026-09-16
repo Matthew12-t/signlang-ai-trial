@@ -1,5 +1,6 @@
 import httpx
 import pytest
+import requests
 
 from src.shared.config import Settings
 from src.shared.models import ChatMessage
@@ -154,6 +155,19 @@ async def test_complete_json_maps_httpx_timeout_to_provider_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_complete_json_maps_requests_timeout_to_provider_timeout() -> None:
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(requests.exceptions.ReadTimeout("provider secret")),
+        model="test-model",
+    )
+
+    with pytest.raises(ProviderTimeout) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider request timed out")
+
+
+@pytest.mark.asyncio
 async def test_complete_json_hides_unexpected_provider_error_text() -> None:
     provider = HuggingFaceChatProvider(
         client=FakeClient(RuntimeError("https://token:secret@example.invalid")),
@@ -209,6 +223,22 @@ def test_from_settings_rejects_missing_token_without_constructing_client(
 
     with pytest.raises(ProviderUnavailable, match="HF token is not configured"):
         HuggingFaceChatProvider.from_settings(Settings(hf_token=None))
+
+
+@pytest.mark.parametrize("token", ["", "   ", "\t\r\n"])
+def test_from_settings_treats_blank_token_as_missing(
+    token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(**kwargs: object) -> object:
+        raise AssertionError("InferenceClient must not be constructed")
+
+    monkeypatch.setattr("src.shared.providers.huggingface.InferenceClient", fail_if_called)
+    settings = Settings(hf_token=token)
+
+    assert settings.hf_token is None
+    with pytest.raises(ProviderUnavailable, match="HF token is not configured"):
+        HuggingFaceChatProvider.from_settings(settings)
 
 
 @pytest.mark.asyncio
