@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from src.shared.config import Settings
@@ -74,8 +75,10 @@ async def test_complete_json_maps_malformed_json_to_bad_response() -> None:
         client=FakeClient(FakeResponse("not JSON")), model="test-model"
     )
 
-    with pytest.raises(ProviderBadResponse):
+    with pytest.raises(ProviderBadResponse) as raised:
         await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider returned invalid JSON")
 
 
 @pytest.mark.asyncio
@@ -95,14 +98,22 @@ class ResponseError(Exception):
         super().__init__(message)
 
 
+def assert_sanitized_error(error: Exception, message: str) -> None:
+    assert str(error) == message
+    assert error.__suppress_context__ is True
+    assert error.__cause__ is None
+
+
 @pytest.mark.asyncio
 async def test_complete_json_maps_429_to_rate_limited() -> None:
     provider = HuggingFaceChatProvider(
         client=FakeClient(ResponseError(429)), model="test-model"
     )
 
-    with pytest.raises(ProviderRateLimited):
+    with pytest.raises(ProviderRateLimited) as raised:
         await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider rate limit exceeded")
 
 
 @pytest.mark.asyncio
@@ -111,8 +122,10 @@ async def test_complete_json_maps_5xx_to_unavailable() -> None:
         client=FakeClient(ResponseError(503)), model="test-model"
     )
 
-    with pytest.raises(ProviderUnavailable):
+    with pytest.raises(ProviderUnavailable) as raised:
         await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider is unavailable")
 
 
 @pytest.mark.asyncio
@@ -121,8 +134,23 @@ async def test_complete_json_maps_timeout_to_provider_timeout() -> None:
         client=FakeClient(TimeoutError("provider secret")), model="test-model"
     )
 
-    with pytest.raises(ProviderTimeout):
+    with pytest.raises(ProviderTimeout) as raised:
         await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider request timed out")
+
+
+@pytest.mark.asyncio
+async def test_complete_json_maps_httpx_timeout_to_provider_timeout() -> None:
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(httpx.ReadTimeout("https://token:secret@example.invalid")),
+        model="test-model",
+    )
+
+    with pytest.raises(ProviderTimeout) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider request timed out")
 
 
 @pytest.mark.asyncio
@@ -135,7 +163,7 @@ async def test_complete_json_hides_unexpected_provider_error_text() -> None:
     with pytest.raises(ProviderBadResponse) as raised:
         await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
 
-    assert "https://token:secret@example.invalid" not in str(raised.value)
+    assert_sanitized_error(raised.value, "Provider returned an invalid response")
 
 
 @pytest.mark.asyncio
@@ -181,3 +209,43 @@ def test_from_settings_rejects_missing_token_without_constructing_client(
 
     with pytest.raises(ProviderUnavailable, match="HF token is not configured"):
         HuggingFaceChatProvider.from_settings(Settings(hf_token=None))
+
+
+@pytest.mark.asyncio
+async def test_from_settings_builds_configured_client_and_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient(FakeResponse("{}"))
+    captured: dict[str, object] = {}
+
+    def build_client(**kwargs: object) -> FakeClient:
+        captured.update(kwargs)
+        return client
+
+    monkeypatch.setattr("src.shared.providers.huggingface.InferenceClient", build_client)
+    provider = HuggingFaceChatProvider.from_settings(
+        Settings(
+            hf_token="test-token",
+            hf_provider="together",
+            request_timeout_seconds=12.5,
+            llm_model="configured-model",
+            hf_use_structured_output=True,
+        )
+    )
+
+    await provider.complete_json(messages(), {"type": "object"}, max_tokens=42, temperature=0.2)
+
+    assert captured == {
+        "provider": "together",
+        "api_key": "test-token",
+        "timeout": 12.5,
+    }
+    assert client.calls[0]["model"] == "configured-model"
+    assert client.calls[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "isyara_response",
+            "schema": {"type": "object"},
+            "strict": True,
+        },
+    }

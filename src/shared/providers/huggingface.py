@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import httpx
 from huggingface_hub import InferenceClient
 
 from src.shared.config import Settings
@@ -70,17 +71,17 @@ class HuggingFaceChatProvider:
         try:
             response = await asyncio.to_thread(self._client.chat_completion, **request)
             parsed = json.loads(response.choices[0].message.content)
-        except TimeoutError as error:
-            raise ProviderTimeout("Provider request timed out") from error
-        except json.JSONDecodeError as error:
-            raise ProviderBadResponse("Provider returned invalid JSON") from error
+        except (TimeoutError, httpx.TimeoutException):
+            raise ProviderTimeout("Provider request timed out") from None
+        except json.JSONDecodeError:
+            raise ProviderBadResponse("Provider returned invalid JSON") from None
         except Exception as error:
             status_code = getattr(getattr(error, "response", None), "status_code", None)
             if status_code == 429:
-                raise ProviderRateLimited("Provider rate limit exceeded") from error
+                raise ProviderRateLimited("Provider rate limit exceeded") from None
             if isinstance(status_code, int) and 500 <= status_code < 600:
-                raise ProviderUnavailable("Provider is unavailable") from error
-            raise ProviderBadResponse("Provider returned an invalid response") from error
+                raise ProviderUnavailable("Provider is unavailable") from None
+            raise ProviderBadResponse("Provider returned an invalid response") from None
 
         if not isinstance(parsed, dict):
             raise ProviderBadResponse("Provider returned a JSON value other than an object")
