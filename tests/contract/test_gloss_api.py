@@ -10,6 +10,15 @@ from src.shared.config import Settings
 client = TestClient(create_app(Settings(gloss_mode="template")))
 
 
+def test_openapi_contains_gloss_and_health_paths() -> None:
+    schema = client.get("/openapi.json").json()
+    assert "/v1/gloss/normalize" in schema["paths"]
+    assert "/health/live" in schema["paths"]
+    assert "/health/ready" in schema["paths"]
+    response_schema = schema["paths"]["/v1/gloss/normalize"]["post"]["responses"]["200"]
+    assert response_schema["content"]["application/json"]["schema"]
+
+
 def payload(language: str = "en") -> dict[str, object]:
     return {
         "utteranceId": "utt_1",

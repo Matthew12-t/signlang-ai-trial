@@ -1,2 +1,4 @@
-# OpenAPI contract for Isyara AI Services.
+openapi_artifact: ./openapi.json
+generated_from: src.main:app
+description: Machine-readable OpenAPI is generated from the FastAPI application.
 
