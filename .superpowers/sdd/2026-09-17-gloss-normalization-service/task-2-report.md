@@ -58,3 +58,51 @@ exit_code=0
 ## Concerns
 
 Pytest emits an existing `pytest_asyncio` deprecation warning because `asyncio_default_fixture_loop_scope` is unset; this is unrelated to Task 2 and was not changed.
+
+## Fix round 1
+
+### Files changed
+
+- `src/shared/models.py` — restricted `GlossNormalizeRequest.language` to `Literal["en"]`.
+- `tests/unit/test_gloss_rules.py` — added a Pydantic `ValidationError` rejection test for `language="id"`.
+
+### RED evidence
+
+Before the model change:
+
+```text
+python -m pytest tests/unit/test_gloss_rules.py -v
+...
+collected 10 items
+tests\\unit\\test_gloss_rules.py .........F [100%]
+Failed: DID NOT RAISE <class 'pydantic_core._pydantic_core.ValidationError'>
+1 failed, 9 passed in 0.48s
+exit_code=1
+```
+
+### GREEN / covering test evidence
+
+```text
+python -m pytest tests/unit/test_gloss_rules.py -v
+...
+collected 10 items
+tests\\unit\\test_gloss_rules.py .......... [100%]
+10 passed in 0.39s
+exit_code=0
+```
+
+### Full-suite evidence
+
+```text
+python -m pytest -v
+...
+collected 13 items
+tests\\contract\\test_health.py ... [23%]
+tests\\unit\\test_gloss_rules.py .......... [100%]
+13 passed in 1.00s
+exit_code=0
+```
+
+### Self-review
+
+The request model now rejects every language other than exactly `"en"` through Pydantic validation; no other model or normalization behavior was changed. The existing pytest-asyncio deprecation warning remains unrelated.

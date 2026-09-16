@@ -1,7 +1,8 @@
 import pytest
+from pydantic import ValidationError
 
 from src.gloss.rules import normalize_with_rules
-from src.shared.models import ConfirmedSignToken
+from src.shared.models import ConfirmedSignToken, GlossNormalizeRequest
 
 
 def token(token_id: str, label: str) -> ConfirmedSignToken:
@@ -35,3 +36,12 @@ def test_unmatched_input_is_preserved_and_warned() -> None:
     result = normalize_with_rules([token("1", "NEED_HELP"), token("2", "NOW")])
     assert result.text == "Need help now."
     assert result.warnings == ["UNMATCHED_TEMPLATE"]
+
+
+def test_request_rejects_unsupported_language() -> None:
+    with pytest.raises(ValidationError):
+        GlossNormalizeRequest(
+            utteranceId="u1",
+            language="id",
+            tokens=[token("1", "HELLO")],
+        )

@@ -28,7 +28,7 @@ class ConfirmedSignToken(APIModel):
 
 class GlossNormalizeRequest(APIModel):
     utterance_id: str = Field(alias="utteranceId", min_length=1, max_length=128)
-    language: str
+    language: Literal["en"]
     tokens: list[ConfirmedSignToken] = Field(min_length=1)
 
 
