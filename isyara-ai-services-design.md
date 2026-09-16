@@ -1,6 +1,6 @@
 # Isyara AI Services — Design and API Contract
 
-Status: Draft v0.1  
+Status: Draft v0.2  
 Target: MVP Hackathon IFEST 2026  
 Audience: tim software engineering dan tim AI  
 Bahasa demo awal: Inggris
@@ -11,7 +11,7 @@ Dokumen ini menetapkan batas tanggung jawab, kontrak data, fungsi inti, API, alu
 
 Prinsip utamanya:
 
-- Frontend hanya berkomunikasi dengan Application API, kecuali koneksi lokal ke Sign Service yang memang diperlukan untuk demo.
+- Frontend hanya berkomunikasi dengan Application API melalui REST.
 - Token Hugging Face hanya berada di server.
 - Application API menjadi sumber kebenaran untuk session, utterance, dan transcript.
 - Layanan AI dibuat stateless sejauh memungkinkan.
@@ -31,18 +31,17 @@ Prinsip utamanya:
 | TTS Service | repo AI services | server AI | adapter TTS Hugging Face, audio hasil sintesis |
 | Recall Service | repo AI services | server AI | prompt Qwen, keluaran terstruktur, validasi awal |
 | Gloss Service | repo AI services | server AI | merapikan rangkaian token sign menjadi teks; bukan Conversation Recall |
-| Sign Service | repo AI/sign terpisah | laptop RTX 3060 | SignBart, temporal aggregation, top-k, status confidence |
+| Sign Service | repo AI/sign terpisah | laptop RTX 3060 | SignBart, inferensi isolated sign, top-k, status confidence |
 
-Sign Service lokal hanya bind ke `127.0.0.1`. STT, TTS, Recall, dan Gloss dapat berada dalam satu proses FastAPI untuk demo, tetapi harus tetap dipisahkan sebagai modul dan router agar dapat dipecah menjadi deployment terpisah tanpa mengubah kontrak.
+Sign Service lokal hanya bind ke `127.0.0.1` atau jaringan privat yang dapat dijangkau Application API. Frontend tidak mengaksesnya secara langsung. STT, TTS, Recall, dan Gloss dapat berada dalam satu proses FastAPI untuk demo, tetapi harus tetap dipisahkan sebagai modul dan router agar dapat dipecah menjadi deployment terpisah tanpa mengubah kontrak.
 
 ### 2.2 Diagram komponen
 
 ```mermaid
 flowchart LR
-    UI[Web Client] -->|HTTPS / WebSocket| APP[Application API]
-    UI -->|WS localhost, frame/landmark| SIGN[Local Sign Service\nSignBart + Confidence]
-    SIGN -->|prediction events| UI
+    UI[Web Client] -->|REST HTTPS| APP[Python Application API]
 
+    APP -->|short sign clip, REST| SIGN[Local Sign Service\nSignBart + Confidence]
     APP -->|audio chunk/batch| STT[STT Service]
     APP -->|confirmed text| TTS[TTS Service]
     APP -->|confirmed sign tokens| GLOSS[Gloss Service]
@@ -103,19 +102,22 @@ Konfigurasi awal untuk demo:
 
 ```text
 1. Frontend memanggil Create Utterance pada Application API.
-2. Frontend membuka Sign Service lokal dengan utteranceId tersebut.
-3. Kamera mengirim frame/landmark selama tombol Start Sign aktif.
-4. Sign Service menghasilkan prediction event: top-k, confidence, temporal status.
-5. Untuk CONFIDENT, UI dapat menawarkan Accept; untuk AMBIGUOUS, UI wajib meminta pilihan.
-6. Setelah pengguna mengonfirmasi, frontend mengirim confirmed token ke Application API.
-7. Token langsung ditampilkan sebagai live sign transcript.
-8. Saat Stop Sign ditekan, frontend meminta Application API memfinalisasi utterance.
-9. Application API mengirim seluruh confirmed token pada range tersebut ke Gloss Service.
-10. Teks hasil normalisasi disimpan sebagai satu transcript entry dengan source=sign.
-11. Teks final dapat dikirim ke TTS Service hanya setelah pengguna memilih Speak.
+2. Frontend merekam satu klip pendek yang berisi satu isolated sign.
+3. Frontend mengunggah klip ke Application API.
+4. Application API meneruskan klip ke Sign Service melalui REST.
+5. Sign Service menjalankan SignBart dan mengembalikan top-k, confidence, status, dan latency.
+6. Application API meneruskan prediction ke frontend tanpa menyimpannya sebagai transcript.
+7. Untuk CONFIDENT, UI menawarkan Accept; untuk AMBIGUOUS, UI wajib meminta pilihan.
+8. Setelah pengguna mengonfirmasi, frontend mengirim confirmed token ke Application API.
+9. Token langsung ditampilkan sebagai live sign transcript.
+10. Langkah 2–9 diulang untuk kata berikutnya.
+11. Saat Stop Sign ditekan, frontend meminta Application API memfinalisasi utterance.
+12. Application API mengirim seluruh confirmed token pada range tersebut ke Gloss Service.
+13. Teks hasil normalisasi disimpan sebagai satu transcript entry dengan source=sign.
+14. Teks final dapat dikirim ke TTS Service hanya setelah pengguna memilih Speak.
 ```
 
-`prediction` bukan transcript. Hanya token berstatus `confirmed` yang boleh dikirim ke Gloss Service, TTS, atau Recall.
+`prediction` bukan transcript. Hanya token berstatus `confirmed` yang boleh dikirim ke Gloss Service, TTS, atau Recall. Untuk model word-level, satu request prediksi harus merepresentasikan satu klip sign; pengiriman frame tunggal berulang melalui REST tidak menjadi bagian kontrak MVP.
 
 ### 3.3 Conversation Recall dengan Qwen via Hugging Face
 
@@ -164,7 +166,40 @@ Semua endpoint internal menggunakan prefix `/v1`. Spesifikasi mesin terdapat di 
 
 HF token tidak pernah diteruskan dari frontend atau Application API dalam request. Token dibaca oleh masing-masing service dari secret environment.
 
-### 4.2 STT — `POST /v1/stt/transcriptions`
+### 4.2 Sign prediction — `POST /v1/sign/predict`
+
+Input: `multipart/form-data` berisi satu klip isolated sign.
+
+```text
+video: binary
+topK: 3
+vocabularyVersion: mvp-en-v1
+```
+
+Response `200`:
+
+```json
+{
+  "requestId": "c946f42d-474e-40f4-a6d9-b0eb75f05a9a",
+  "predictionId": "pred_01J8Y7RK2F",
+  "prediction": "REPEAT",
+  "confidence": 0.86,
+  "candidates": [
+    {"label": "REPEAT", "confidence": 0.86},
+    {"label": "AGAIN", "confidence": 0.09},
+    {"label": "UNDERSTAND", "confidence": 0.03}
+  ],
+  "status": "CONFIDENT",
+  "requiresConfirmation": false,
+  "modelVersion": "signbart-mvp-v1",
+  "vocabularyVersion": "mvp-en-v1",
+  "latencyMs": 184
+}
+```
+
+Sign Service bersifat stateless: service tidak membuat session, utterance, atau transcript. Application API menyimpan hubungan antara `predictionId`, `utteranceId`, dan hasil konfirmasi pengguna.
+
+### 4.3 STT — `POST /v1/stt/transcriptions`
 
 Input: `multipart/form-data` dengan file audio dan metadata.
 
@@ -199,7 +234,7 @@ Response `200`:
 
 Endpoint batch ini juga menjadi primitive yang dipakai implementasi rolling chunk WebSocket.
 
-### 4.3 TTS — `POST /v1/tts/synthesize`
+### 4.4 TTS — `POST /v1/tts/synthesize`
 
 Request:
 
@@ -220,7 +255,7 @@ Response `200`: body biner `audio/wav`, dengan header:
 
 Teks maksimum MVP: 500 karakter. Kegagalan TTS tidak menghapus teks dan tidak menggagalkan utterance. Jika provider mengembalikan format yang berbeda, TTS Service wajib menormalisasi atau mentranskode audio ke format yang diminta sebelum mengirim response.
 
-### 4.4 Gloss normalization — `POST /v1/gloss/normalize`
+### 4.5 Gloss normalization — `POST /v1/gloss/normalize`
 
 Endpoint ini merapikan confirmed sign tokens setelah Stop Sign. Endpoint ini tidak menjawab pertanyaan tentang percakapan.
 
@@ -253,7 +288,7 @@ Response:
 
 Untuk vocabulary 10–20 sign, gunakan rule/template deterministik terlebih dahulu. Mode LLM untuk endpoint ini boleh menjadi feature flag, tetapi tidak boleh mengubah atau menambah fakta.
 
-### 4.5 Recall — `POST /v1/recall/query`
+### 4.6 Recall — `POST /v1/recall/query`
 
 Request:
 
@@ -322,132 +357,49 @@ Response ketika konteks tidak mendukung jawaban tetap menggunakan `200`:
 
 `404` tidak digunakan untuk jawaban yang tidak ditemukan karena request berhasil diproses. Kode error HTTP dipakai untuk kegagalan teknis atau request tidak valid.
 
-## 5. Kontrak WebSocket
+## 5. Pola Transport REST
 
-### 5.1 STT stream
+Seluruh koneksi frontend dan antarlayanan menggunakan REST pada MVP. Tidak ada koneksi langsung dari browser ke Sign Service atau provider AI.
 
-Path internal:
+### 5.1 Near-real-time STT melalui REST
 
-```text
-WS /v1/stt/streams/{streamId}
-```
+Frontend mengirim potongan audio berurutan ke Application API. Setiap request membawa `streamId`, `sequence`, dan `commit`. Application API meneruskan audio ke STT Service. Response sebelum commit diperlakukan sebagai partial provisional; response commit diperlakukan sebagai final dan disimpan.
 
-Pesan client pertama:
+Detail endpoint publik terdapat dalam `isyara-application-server-openapi.yaml`. Pemilik STT dapat mengubah cara buffering internal selama kontrak HTTP tidak berubah.
 
-```json
-{
-  "type": "start",
-  "sessionId": "ses_01J8Y6Z4Q1",
-  "audio": {
-    "encoding": "pcm_s16le",
-    "sampleRateHz": 16000,
-    "channels": 1
-  },
-  "language": "en"
-}
-```
+### 5.2 Word-level Sign melalui REST
 
-Setelah event `ready`, client mengirim binary audio frames. Control frame berbentuk JSON:
-
-```json
-{"type": "commit"}
-```
-
-```json
-{"type": "stop"}
-```
-
-Server events:
-
-```json
-{
-  "type": "partial",
-  "revision": 4,
-  "text": "the deadline is Friday",
-  "audioStartMs": 0,
-  "audioEndMs": 1800,
-  "isFinal": false
-}
-```
-
-```json
-{
-  "type": "final",
-  "revision": 5,
-  "text": "The deadline is Friday at five.",
-  "audioStartMs": 0,
-  "audioEndMs": 2410,
-  "isFinal": true
-}
-```
-
-Aturan:
-
-- `revision` selalu naik dalam satu stream;
-- partial dengan revision lama harus diganti, bukan ditambahkan;
-- final bersifat append-only;
-- client mengirim frame 20–100 ms agar buffer stabil;
-- server menutup stream setelah `stop`, final event, dan `closed` event;
-- maksimum satu stream STT aktif per session pada MVP.
-
-### 5.2 Local Sign stream
-
-Path lokal:
-
-```text
-WS ws://127.0.0.1:{SIGN_PORT}/v1/sign/streams/{utteranceId}
-```
-
-Pesan awal:
-
-```json
-{
-  "type": "start",
-  "vocabularyVersion": "mvp-en-v1",
-  "input": "landmarks",
-  "topK": 3
-}
-```
-
-Prediction event:
-
-```json
-{
-  "type": "prediction",
-  "predictionId": "pred_01J8Y7RK2F",
-  "label": "REPEAT",
-  "confidence": 0.86,
-  "candidates": [
-    {"label": "REPEAT", "confidence": 0.86},
-    {"label": "AGAIN", "confidence": 0.09},
-    {"label": "UNDERSTAND", "confidence": 0.03}
-  ],
-  "temporalConsistency": 0.91,
-  "status": "CONFIDENT",
-  "observedAt": "2026-09-18T10:15:22Z"
-}
-```
+Satu request `/v1/sign/predict` berisi satu klip pendek untuk satu sign. Format video MVP yang disarankan adalah `video/webm` atau `video/mp4`, dengan batas ukuran dan durasi yang ditetapkan bersama tim frontend.
 
 Status valid:
 
 - `CONFIDENT`;
 - `AMBIGUOUS`;
-- `UNSTABLE`;
 - `UNKNOWN`;
+- `INVALID_INPUT`;
 - `NO_SIGN`.
 
-Sign Service tidak menentukan apakah token telah diterima sebagai transcript. Keputusan `accept`, `choose candidate`, `retry`, atau `cancel` dilakukan di UI dan disimpan melalui Application API.
+Sign Service tidak menentukan apakah kata telah diterima sebagai transcript. Keputusan `accept`, `choose candidate`, `retry`, atau `cancel` dilakukan di UI, lalu disimpan melalui Application API.
+
+### 5.3 Konsekuensi latency
+
+- Jangan mengirim satu HTTP request per frame.
+- Rekam satu klip 1–2 detik per kata, lalu unggah satu kali.
+- Application API meneruskan body sebagai stream dan tidak menyalin file ke disk kecuali diperlukan.
+- Muat model SignBart saat startup, bukan pada setiap request.
+- Batasi concurrency GPU menjadi satu atau sesuai hasil benchmark agar demo tidak mengalami kehabisan VRAM.
+- Kembalikan `latencyMs` dari Sign Service dan `totalLatencyMs` dari Application API agar bottleneck dapat dibedakan.
 
 ## 6. Kontrak Application API yang Dibutuhkan Frontend
 
-Endpoint berikut dimiliki repo software engineering. Daftar ini menjadi dependency AI services, bukan implementasi di repo AI.
+Endpoint berikut dimiliki repo software engineering. Daftar ini menjadi dependency AI services, bukan implementasi di repo AI. Design lengkap terdapat dalam `isyara-application-server-design.md`, sedangkan kontrak mesin terdapat dalam `isyara-application-server-openapi.yaml`.
 
 | Method dan path | Fungsi |
 |---|---|
 | `POST /v1/sessions` | membuat session |
-| `POST /v1/sessions/{sessionId}/stt:start` | membuka STT stream yang telah diautentikasi |
-| `POST /v1/sessions/{sessionId}/stt:stop` | commit dan menutup STT stream |
+| `POST /v1/sessions/{sessionId}/stt/chunks` | mengirim audio chunk provisional atau final |
 | `POST /v1/sessions/{sessionId}/utterances` | membuat range Start Sign |
+| `POST /v1/utterances/{utteranceId}/predictions` | mengunggah satu klip sign dan memperoleh prediction |
 | `POST /v1/utterances/{utteranceId}/tokens` | menyimpan token sign terkonfirmasi |
 | `POST /v1/utterances/{utteranceId}:finalize` | Stop Sign, normalisasi, simpan transcript |
 | `POST /v1/utterances/{utteranceId}:speak` | sintesis teks final |
@@ -462,6 +414,14 @@ Frontend tidak perlu mengetahui `HF_RECALL_MODEL`, URL provider, atau bentuk pro
 Kontrak berikut ditulis sebagai pseudocode Python agar mudah diterjemahkan ke FastAPI/Pydantic.
 
 ```python
+async def predict_sign(
+    video: bytes,
+    *,
+    content_type: str,
+    top_k: int,
+    vocabulary_version: str,
+) -> SignPredictionResult: ...
+
 async def transcribe_audio(
     audio: bytes,
     *,
@@ -508,6 +468,9 @@ def validate_recall_evidence(
 Adapter provider:
 
 ```python
+class SignRecognitionModel(Protocol):
+    async def predict(self, video: bytes, options: SignOptions) -> SignPredictionResult: ...
+
 class SpeechToTextProvider(Protocol):
     async def transcribe(self, audio: bytes, options: STTOptions) -> ProviderTranscript: ...
 
@@ -605,7 +568,7 @@ Target ini merupakan budget demo, bukan SLA produksi.
 
 | Operasi | Target UI | Hard timeout service | Retry |
 |---|---:|---:|---:|
-| Sign prediction event | p95 < 300 ms setelah window siap | 1 s | 0 |
+| Sign prediction | p95 < 500 ms setelah klip diterima | 2 s | 0 |
 | STT partial provisional | setiap 1.5–2.5 s | 6 s/chunk | 0 |
 | STT final | < 3 s setelah Stop | 10 s | 1 |
 | TTS audio | < 3 s | 12 s | 1 |
@@ -676,6 +639,9 @@ SIGN_HOST=127.0.0.1
 SIGN_PORT=8765
 SIGN_MODEL_PATH=
 SIGN_VOCABULARY_PATH=
+SIGN_MAX_CLIP_BYTES=10000000
+SIGN_MAX_CLIP_DURATION_MS=3000
+SIGN_MAX_CONCURRENCY=1
 ```
 
 Nilai model di atas adalah kandidat awal, bukan bagian permanen dari kontrak. Model TTS/provider perlu dipilih melalui smoke test karena dukungan provider berbeda per task dan dapat berubah.
@@ -736,6 +702,24 @@ ai-services/
 │  └─ smoke/
 ├─ .env.example
 └─ README.md
+
+sign-service/
+├─ contracts/
+│  └─ openapi.yaml
+├─ src/
+│  ├─ api.py
+│  ├─ preprocessing.py
+│  ├─ inference.py
+│  ├─ confidence.py
+│  └─ schemas.py
+├─ models/
+│  └─ README.md
+├─ tests/
+│  ├─ contract/
+│  ├─ unit/
+│  └─ smoke/
+├─ .env.example
+└─ README.md
 ```
 
 SignBart tetap berada di repo/deployment lokal terpisah agar dependency CUDA dan model vision tidak membebani service server.
@@ -744,6 +728,8 @@ SignBart tetap berada di repo/deployment lokal terpisah agar dependency CUDA dan
 
 - OpenAPI dapat dipakai tim software engineering untuk membuat mock client tanpa menjalankan model.
 - Semua response menyertakan atau memantulkan `requestId`.
+- Frontend tidak berkomunikasi langsung dengan Sign Service.
+- Satu request sign berisi satu klip isolated sign, bukan satu frame.
 - Frontend tidak memiliki HF token.
 - Partial STT tidak pernah disimpan sebagai transcript final.
 - Stop Sign hanya memproses token yang telah dikonfirmasi.
@@ -758,10 +744,10 @@ SignBart tetap berada di repo/deployment lokal terpisah agar dependency CUDA dan
 1. Bekukan schema OpenAPI dan buat mock response.
 2. Implementasikan Transcript Store dan endpoint Application API.
 3. Implementasikan Gloss Service berbasis template.
-4. Implementasikan STT batch, lalu adapter rolling-chunk WebSocket.
+4. Implementasikan STT batch dan orkestrasi rolling chunk berbasis REST.
 5. Implementasikan TTS dan fallback text-only.
 6. Implementasikan Recall Qwen + structured output + evidence validator.
-7. Hubungkan Local Sign Service dan alur confirmation.
+7. Hubungkan Local Sign Service melalui REST dan alur confirmation.
 8. Jalankan smoke test end-to-end untuk skenario demo.
 
 ## 17. Rujukan Implementasi
