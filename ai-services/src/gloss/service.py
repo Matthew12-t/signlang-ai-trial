@@ -1,0 +1,2 @@
+"""Gloss normalization application service."""
+
