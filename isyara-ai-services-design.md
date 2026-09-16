@@ -27,8 +27,8 @@ Prinsip utamanya:
 |---|---|---|---|
 | Web Client | repo software engineering | browser | kamera, mikrofon, UI caption, konfirmasi sign, kontrol session, Recall |
 | Application API | repo software engineering | server aplikasi | session, transcript store, orkestrasi, autentikasi, kontrak publik |
-| STT Service | repo AI services | server AI | adapter ASR Hugging Face, chunking, hasil provisional/final |
-| TTS Service | repo AI services | server AI | adapter TTS Hugging Face, audio hasil sintesis |
+| STT Service | repo AI services | server AI | Faster Whisper/CTranslate2 lokal, chunking, hasil provisional/final |
+| TTS Service | repo AI services | server AI | VoxCPM2 lokal, encoding audio hasil sintesis |
 | Recall Service | repo AI services | server AI | prompt Qwen, keluaran terstruktur, validasi awal |
 | Gloss Service | repo AI services | server AI | merapikan rangkaian token sign menjadi teks; bukan Conversation Recall |
 | Sign Service | repo AI/sign terpisah | laptop RTX 3060 | SignBart, inferensi isolated sign, top-k, status confidence |
@@ -47,8 +47,8 @@ flowchart LR
     APP -->|confirmed sign tokens| GLOSS[Gloss Service]
     APP -->|question + bounded transcript| RECALL[Recall Service]
 
-    STT --> HFSTT[Hugging Face ASR]
-    TTS --> HFTTS[Hugging Face TTS]
+    STT --> FW[Systran Faster Whisper\nCTranslate2 lokal]
+    TTS --> VOX[OpenBMB VoxCPM2\nruntime lokal]
     RECALL --> QWEN[Qwen via Hugging Face]
 
     APP --> STORE[(Transcript Store)]
@@ -88,7 +88,7 @@ Frontend          Application API        STT Service          HF ASR
    |<--------------------|                    |                  |
 ```
 
-Catatan penting: antarmuka ASR `InferenceClient.automatic_speech_recognition` menerima audio sebagai satu request. Karena itu, `partial` pada MVP adalah hasil **provisional** dari rolling chunk yang dibuat STT Service, bukan token streaming native dari model. Partial boleh berubah dan tidak disimpan. Hanya event `final` yang masuk Transcript Store.
+Catatan penting: `faster-whisper` memproses satu audio buffer pada setiap pemanggilan `transcribe`. Karena itu, `partial` pada MVP adalah hasil **provisional** dari rolling chunk yang diorkestrasi melalui REST, bukan token streaming native dari model. Partial boleh berubah dan tidak disimpan. Hanya event `final` yang masuk Transcript Store.
 
 Konfigurasi awal untuk demo:
 
@@ -225,14 +225,14 @@ Response `200`:
     }
   ],
   "model": {
-    "provider": "huggingface",
-    "id": "configured-at-runtime"
+    "provider": "local-ctranslate2",
+    "id": "Systran/faster-whisper-large-v3"
   },
   "latencyMs": 682
 }
 ```
 
-Endpoint batch ini juga menjadi primitive yang dipakai implementasi rolling chunk WebSocket.
+Endpoint batch ini juga menjadi primitive yang dipakai orkestrasi rolling chunk REST oleh Application API.
 
 ### 4.4 TTS — `POST /v1/tts/synthesize`
 
@@ -481,7 +481,7 @@ class ChatProvider(Protocol):
     async def complete_json(self, messages: list[ChatMessage], schema: dict) -> dict: ...
 ```
 
-Implementasi awal memakai Hugging Face, tetapi service layer hanya bergantung pada protocol tersebut.
+Implementasi STT awal memakai Faster Whisper/CTranslate2 dan implementasi TTS memakai VoxCPM2 secara lokal. Recall tetap dapat memakai Hugging Face. Service layer hanya bergantung pada protocol tersebut agar runtime dapat diganti tanpa mengubah kontrak HTTP.
 
 ## 8. Prompt Contract Recall
 
@@ -611,22 +611,42 @@ Daftar model yang benar-benar dirutekan oleh Hugging Face dapat berubah. Karena 
 INTERNAL_API_KEY=
 LOG_LEVEL=INFO
 REQUEST_TIMEOUT_SECONDS=15
+MODEL_QUEUE_TIMEOUT_SECONDS=2
+MODEL_CACHE_DIR=
+ENABLED_SERVICES=stt,tts
+PRELOAD_MODELS=true
 
-# Hugging Face
+# Hugging Face Hub dan hosted Recall
 HF_TOKEN=
 HF_PROVIDER=auto
 
 # STT
-HF_STT_MODEL=openai/whisper-large-v3-turbo
-STT_LANGUAGE=en
-STT_PARTIAL_MODE=rolling_chunk
-STT_CHUNK_MS=1800
-STT_OVERLAP_MS=300
+HF_STT_MODEL=Systran/faster-whisper-large-v3
+STT_DEVICE=cuda
+STT_COMPUTE_TYPE=float16
+STT_BEAM_SIZE=5
+STT_ALLOWED_LANGUAGES=en
+STT_VAD_FILTER=true
+STT_MIN_SILENCE_MS=500
+STT_CONDITION_ON_PREVIOUS_TEXT=false
+STT_MAX_AUDIO_BYTES=10000000
+STT_MAX_CONCURRENCY=1
 
 # TTS
-HF_TTS_MODEL=hexgrad/Kokoro-82M
-HF_TTS_PROVIDER=replicate
+HF_TTS_MODEL=openbmb/VoxCPM2
+TTS_DEVICE=cuda
+TTS_OPTIMIZE=true
+TTS_LOAD_DENOISER=false
+TTS_NORMALIZE=true
+TTS_CFG_VALUE=2.0
+TTS_INFERENCE_TIMESTEPS=10
+TTS_SEED=42
+TTS_ALLOWED_LANGUAGES=en,id
 TTS_OUTPUT_FORMAT=wav
+TTS_MAX_TEXT_CHARS=500
+TTS_CHUNK_CHARS=200
+TTS_PAUSE_MS=120
+TTS_MAX_CONCURRENCY=1
 
 # Recall
 HF_RECALL_MODEL=Qwen/Qwen3-8B
@@ -644,7 +664,7 @@ SIGN_MAX_CLIP_DURATION_MS=3000
 SIGN_MAX_CONCURRENCY=1
 ```
 
-Nilai model di atas adalah kandidat awal, bukan bagian permanen dari kontrak. Model TTS/provider perlu dipilih melalui smoke test karena dukungan provider berbeda per task dan dapat berubah.
+STT dan TTS dijalankan secara lokal; Hugging Face Hub digunakan untuk mengambil artefak model. Compute type, kemampuan kedua model hidup pada GPU yang sama, latency, dan penggunaan VRAM wajib diverifikasi melalui smoke test pada hardware deployment.
 
 ## 13. Observability dan Privasi
 
@@ -680,13 +700,16 @@ ai-services/
 │  │  ├─ models.py
 │  │  ├─ observability.py
 │  │  └─ providers/
-│  │     └─ huggingface.py
+│  │     ├─ faster_whisper.py
+│  │     ├─ huggingface.py
+│  │     └─ voxcpm.py
 │  ├─ stt/
 │  │  ├─ api.py
 │  │  ├─ service.py
 │  │  └─ stream.py
 │  ├─ tts/
 │  │  ├─ api.py
+│  │  ├─ audio.py
 │  │  └─ service.py
 │  ├─ gloss/
 │  │  ├─ api.py
@@ -752,7 +775,9 @@ SignBart tetap berada di repo/deployment lokal terpisah agar dependency CUDA dan
 
 ## 17. Rujukan Implementasi
 
-- Hugging Face Inference Providers menyediakan routing provider dan `InferenceClient`: https://huggingface.co/docs/inference-providers/en/index
+- Model CTranslate2 STT: https://huggingface.co/Systran/faster-whisper-large-v3
+- Runtime Faster Whisper: https://github.com/SYSTRAN/faster-whisper
+- Model dan runtime VoxCPM2: https://huggingface.co/openbmb/VoxCPM2 dan https://voxcpm.readthedocs.io/
+- Hugging Face Inference Providers menyediakan routing provider untuk Recall: https://huggingface.co/docs/inference-providers/en/index
 - Chat completion dapat diakses melalui API kompatibel OpenAI/Inference Client: https://huggingface.co/docs/inference-providers/tasks/chat-completion
-- Referensi `InferenceClient`, termasuk ASR dan TTS: https://huggingface.co/docs/huggingface_hub/package_reference/inference_client
 - Model Qwen yang tersedia harus diperiksa saat implementasi: https://huggingface.co/Qwen
