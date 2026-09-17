@@ -1,0 +1,119 @@
+name: isyara-sign-service
+
+x-sign-defaults: &sign-defaults
+  image: isyara-sign-service:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  ports:
+    - "127.0.0.1:8765:8765"
+  volumes:
+    - type: bind
+      source: ./config
+      target: /app/config
+      read_only: true
+    - type: bind
+      source: ./models
+      target: /app/models
+      read_only: true
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8765/health/live', timeout=2); raise SystemExit(0 if response.status == 200 else 1)"
+    interval: 10s
+    timeout: 3s
+    start_period: 60s
+    retries: 3
+
+services:
+  # Default demo: does not reserve a GPU and is safe for contract/UI smoke
+  # tests on hosts where NVIDIA container support is not available.
+  sign:
+    <<: *sign-defaults
+    environment:
+      INTERNAL_API_KEY: "${INTERNAL_API_KEY:-}"
+      SIGN_HOST: "0.0.0.0"
+      SIGN_PORT: "8765"
+      SIGN_ALLOWED_ORIGINS: "${SIGN_ALLOWED_ORIGINS:-http://localhost:5173}"
+      SIGN_ALLOW_PRIVATE_NETWORK: "${SIGN_ALLOW_PRIVATE_NETWORK:-false}"
+      SIGN_MODEL_BACKEND: "${SIGN_MODEL_BACKEND:-mock}"
+      SIGN_MODEL_PATH: "${SIGN_MODEL_PATH:-}"
+      SIGN_MODEL_VERSION: "${SIGN_MODEL_VERSION:-signbart-mvp-v1}"
+      SIGN_VOCABULARY_PATH: "/app/config/mvp-en-v1.json"
+      SIGN_VOCABULARY_VERSION: "${SIGN_VOCABULARY_VERSION:-mvp-en-v1}"
+      SIGN_SIGNBART_LOADER: "${SIGN_SIGNBART_LOADER:-}"
+      SIGN_SIGNBART_REPO: "${SIGN_SIGNBART_REPO:-}"
+      SIGN_SIGNBART_CONFIG: "${SIGN_SIGNBART_CONFIG:-}"
+      SIGN_DEVICE: "${SIGN_DEVICE:-cpu}"
+      SIGN_USE_FP16: "${SIGN_USE_FP16:-false}"
+      SIGN_REQUIRED_FRAMES: "${SIGN_REQUIRED_FRAMES:-64}"
+      SIGN_INPUT_WIDTH: "${SIGN_INPUT_WIDTH:-224}"
+      SIGN_INPUT_HEIGHT: "${SIGN_INPUT_HEIGHT:-224}"
+      SIGN_INPUT_LAYOUT: "${SIGN_INPUT_LAYOUT:-NCTHW}"
+      SIGN_MAX_CLIP_BYTES: "${SIGN_MAX_CLIP_BYTES:-10000000}"
+      SIGN_MAX_CLIP_DURATION_MS: "${SIGN_MAX_CLIP_DURATION_MS:-3000}"
+      SIGN_MAX_CONCURRENCY: "${SIGN_MAX_CONCURRENCY:-1}"
+      SIGN_QUEUE_SIZE: "${SIGN_QUEUE_SIZE:-2}"
+      SIGN_INFERENCE_TIMEOUT_MS: "${SIGN_INFERENCE_TIMEOUT_MS:-2000}"
+      SIGN_CONFIDENT_THRESHOLD: "${SIGN_CONFIDENT_THRESHOLD:-0.80}"
+      SIGN_UNKNOWN_THRESHOLD: "${SIGN_UNKNOWN_THRESHOLD:-0.40}"
+      SIGN_MIN_TOP1_TOP2_MARGIN: "${SIGN_MIN_TOP1_TOP2_MARGIN:-0.20}"
+      SIGN_STORE_DEBUG_MEDIA: "${SIGN_STORE_DEBUG_MEDIA:-false}"
+
+  # Opt-in real SignBart service. It is separate so mock mode remains usable
+  # without GPU passthrough. The device reservation is the Compose-supported
+  # NVIDIA request; the host port remains loopback-only.
+  sign-real:
+    <<: *sign-defaults
+    profiles: [real]
+    environment:
+      INTERNAL_API_KEY: "${INTERNAL_API_KEY:-}"
+      SIGN_HOST: "0.0.0.0"
+      SIGN_PORT: "8765"
+      SIGN_ALLOWED_ORIGINS: "${SIGN_ALLOWED_ORIGINS:-http://localhost:5173}"
+      SIGN_ALLOW_PRIVATE_NETWORK: "${SIGN_ALLOW_PRIVATE_NETWORK:-false}"
+      SIGN_MODEL_BACKEND: "signbart"
+      SIGN_MODEL_PATH: "/app/models/SignBart-WLASL-100/model.safetensors"
+      SIGN_MODEL_VERSION: "signbart-wlasl100-hf-8f98ae7"
+      SIGN_VOCABULARY_PATH: "/app/config/mvp-en-v1.json"
+      SIGN_VOCABULARY_VERSION: "mvp-en-v1"
+      SIGN_SIGNBART_LOADER: "${SIGN_SIGNBART_LOADER:-}"
+      SIGN_SIGNBART_REPO: "/opt/signbart"
+      SIGN_SIGNBART_CONFIG: "/opt/signbart/configs/WLASL-100.yaml"
+      SIGN_DEVICE: "cuda:0"
+      SIGN_USE_FP16: "${SIGN_USE_FP16:-false}"
+      SIGN_REQUIRED_FRAMES: "${SIGN_REQUIRED_FRAMES:-64}"
+      SIGN_INPUT_WIDTH: "${SIGN_INPUT_WIDTH:-224}"
+      SIGN_INPUT_HEIGHT: "${SIGN_INPUT_HEIGHT:-224}"
+      SIGN_INPUT_LAYOUT: "${SIGN_INPUT_LAYOUT:-NCTHW}"
+      SIGN_MAX_CLIP_BYTES: "${SIGN_MAX_CLIP_BYTES:-10000000}"
+      SIGN_MAX_CLIP_DURATION_MS: "${SIGN_MAX_CLIP_DURATION_MS:-3000}"
+      SIGN_MAX_CONCURRENCY: "${SIGN_MAX_CONCURRENCY:-1}"
+      SIGN_QUEUE_SIZE: "${SIGN_QUEUE_SIZE:-2}"
+      SIGN_INFERENCE_TIMEOUT_MS: "${SIGN_INFERENCE_TIMEOUT_MS:-2000}"
+      SIGN_CONFIDENT_THRESHOLD: "${SIGN_CONFIDENT_THRESHOLD:-0.80}"
+      SIGN_UNKNOWN_THRESHOLD: "${SIGN_UNKNOWN_THRESHOLD:-0.40}"
+      SIGN_MIN_TOP1_TOP2_MARGIN: "${SIGN_MIN_TOP1_TOP2_MARGIN:-0.20}"
+      SIGN_STORE_DEBUG_MEDIA: "${SIGN_STORE_DEBUG_MEDIA:-false}"
+    volumes:
+      - type: bind
+        source: ./config
+        target: /app/config
+        read_only: true
+      - type: bind
+        source: ./models
+        target: /app/models
+        read_only: true
+      - type: bind
+        source: "${SIGNBART_REPO_HOST_PATH:-./SignBart}"
+        target: /opt/signbart
+        read_only: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

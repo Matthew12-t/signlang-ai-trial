@@ -1,0 +1,7 @@
+-r requirements.txt
+mediapipe==0.10.21
+numpy>=1.26,<2
+PyYAML>=6.0,<7
+safetensors>=0.4.5,<1
+torch>=2.4
+tqdm>=4.66,<5
