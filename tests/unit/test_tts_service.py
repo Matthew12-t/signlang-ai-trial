@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 
 import numpy as np
@@ -67,3 +68,72 @@ async def test_tts_rejects_reused_key_with_different_payload() -> None:
             "Different", language="en", voice=None, output_format="wav", idempotency_key="same"
         )
     assert caught.value.code == "IDEMPOTENCY_CONFLICT"
+
+
+@pytest.mark.anyio
+async def test_tts_coalesces_concurrent_requests_with_the_same_key() -> None:
+    settings = replace(
+        Settings.from_env(),
+        tts_allowed_languages=("en",),
+        tts_chunk_chars=500,
+    )
+    provider = FakeTTSProvider()
+    original_synthesize = provider.synthesize
+
+    async def delayed_synthesize(text: str) -> GeneratedAudio:
+        await asyncio.sleep(0.01)
+        return await original_synthesize(text)
+
+    provider.synthesize = delayed_synthesize
+    service = TTSService(provider, settings)
+
+    first, second = await asyncio.gather(
+        service.synthesize_speech(
+            "Hello",
+            language="en",
+            voice=None,
+            output_format="wav",
+            idempotency_key="shared-key",
+        ),
+        service.synthesize_speech(
+            "Hello",
+            language="en",
+            voice=None,
+            output_format="wav",
+            idempotency_key="shared-key",
+        ),
+    )
+
+    assert first.content == second.content
+    assert provider.calls == ["Hello"]
+
+
+@pytest.mark.anyio
+async def test_tts_inference_timeout_is_normalized() -> None:
+    settings = replace(
+        Settings.from_env(),
+        tts_allowed_languages=("en",),
+        tts_timeout_seconds=0.001,
+    )
+    provider = FakeTTSProvider()
+
+    async def slow_synthesize(text: str) -> GeneratedAudio:
+        await asyncio.sleep(0.03)
+        return GeneratedAudio(np.zeros(10, dtype=np.float32), 16_000)
+
+    provider.synthesize = slow_synthesize
+    service = TTSService(provider, settings)
+
+    with pytest.raises(ServiceError) as caught:
+        await service.synthesize_speech(
+            "Hello",
+            language="en",
+            voice=None,
+            output_format="wav",
+            idempotency_key="timeout-key",
+        )
+
+    assert caught.value.code == "INFERENCE_TIMEOUT"
+    assert caught.value.status_code == 504
+    assert caught.value.retryable is True
+    await asyncio.sleep(0.04)

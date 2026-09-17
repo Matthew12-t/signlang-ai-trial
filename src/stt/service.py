@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Protocol
 
+from src.shared.async_utils import wait_for_inference
 from src.shared.config import Settings
 from src.shared.errors import ServiceError
 from src.shared.models import (
@@ -13,6 +15,8 @@ from src.shared.models import (
     TranscriptionResponse,
     TranscriptionSegment,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SpeechToTextProvider(Protocol):
@@ -80,12 +84,35 @@ class STTService:
             )
 
         started = time.perf_counter()
-        result = await self.provider.transcribe(
-            audio,
-            language=language,
-            include_timestamps=include_timestamps,
+        timeout_seconds = min(
+            self.settings.request_timeout_seconds,
+            self.settings.stt_timeout_seconds,
         )
+        try:
+            result = await wait_for_inference(
+                self.provider.transcribe(
+                    audio,
+                    language=language,
+                    include_timestamps=include_timestamps,
+                ),
+                timeout_seconds=timeout_seconds,
+            )
+        except TimeoutError as error:
+            raise ServiceError(
+                code="INFERENCE_TIMEOUT",
+                message="Speech-to-Text inference exceeded its deadline.",
+                status_code=504,
+                retryable=True,
+                details={"timeoutSeconds": timeout_seconds},
+            ) from error
         latency_ms = round((time.perf_counter() - started) * 1000)
+        logger.info(
+            "STT completed model=%s provider=%s audioBytes=%s latencyMs=%s",
+            self.provider.model_id,
+            self.provider.provider_name,
+            len(audio),
+            latency_ms,
+        )
         return TranscriptionResponse(
             request_id=request_id,
             text=result.text,

@@ -52,6 +52,13 @@ def register_error_handlers(app: FastAPI) -> None:
     async def service_error_handler(
         request: Request, error: ServiceError
     ) -> JSONResponse:
+        logger.warning(
+            "Service error code=%s status=%s requestId=%s path=%s",
+            error.code,
+            error.status_code,
+            _request_id(request),
+            request.url.path,
+        )
         return JSONResponse(
             status_code=error.status_code,
             content=_payload(error, request),

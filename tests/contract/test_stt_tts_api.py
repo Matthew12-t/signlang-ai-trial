@@ -104,6 +104,18 @@ def test_internal_api_key_is_enforced() -> None:
     assert response.json()["error"]["code"] == "UNAUTHORIZED"
 
 
+def test_stt_requires_language_and_encoding() -> None:
+    with _client() as client:
+        response = client.post(
+            "/v1/stt/transcriptions",
+            headers={"X-Internal-API-Key": "test-secret"},
+            files={"audio": ("sample.wav", b"RIFF-test", "audio/wav")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+
+
 def test_readiness_reports_injected_models() -> None:
     with _client() as client:
         response = client.get("/health/ready")

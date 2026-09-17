@@ -21,6 +21,7 @@ class VoxCPMProvider:
         self._settings = settings
         self._model: Any | None = None
         self._load_error: str | None = None
+        self._load_lock = asyncio.Lock()
         self._semaphore = asyncio.Semaphore(settings.tts_max_concurrency)
 
     @property
@@ -32,16 +33,17 @@ class VoxCPMProvider:
         return self._load_error
 
     async def load(self) -> None:
-        if self._model is not None:
-            return
-        try:
-            self._model = await asyncio.to_thread(self._load_sync)
-            self._load_error = None
-            logger.info("Loaded TTS model %s", self.model_id)
-        except Exception as error:
-            self._load_error = str(error)
-            logger.exception("Unable to load TTS model %s", self.model_id)
-            raise
+        async with self._load_lock:
+            if self._model is not None:
+                return
+            try:
+                self._model = await asyncio.to_thread(self._load_sync)
+                self._load_error = None
+                logger.info("Loaded TTS model %s", self.model_id)
+            except Exception as error:
+                self._load_error = str(error)
+                logger.exception("Unable to load TTS model %s", self.model_id)
+                raise
 
     def _load_sync(self) -> Any:
         try:
@@ -62,12 +64,17 @@ class VoxCPMProvider:
 
     async def synthesize(self, text: str) -> GeneratedAudio:
         if self._model is None:
-            raise ServiceError(
-                code="MODEL_UNAVAILABLE",
-                message="The Text-to-Speech model is not ready.",
-                status_code=503,
-                retryable=True,
-            )
+            try:
+                await self.load()
+            except ServiceError:
+                raise
+            except Exception as error:
+                raise ServiceError(
+                    code="MODEL_UNAVAILABLE",
+                    message="The Text-to-Speech model could not be loaded.",
+                    status_code=503,
+                    retryable=True,
+                ) from error
 
         try:
             await asyncio.wait_for(

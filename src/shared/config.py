@@ -38,6 +38,7 @@ class Settings:
     """
 
     internal_api_key: str | None
+    require_internal_api_key: bool
     log_level: str
     request_timeout_seconds: float
     model_queue_timeout_seconds: float
@@ -57,6 +58,7 @@ class Settings:
     stt_condition_on_previous_text: bool
     stt_max_audio_bytes: int
     stt_max_concurrency: int
+    stt_timeout_seconds: float
 
     tts_model: str
     tts_device: str
@@ -71,11 +73,22 @@ class Settings:
     tts_chunk_chars: int
     tts_pause_ms: int
     tts_max_concurrency: int
+    tts_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
+        internal_api_key = os.getenv("INTERNAL_API_KEY") or None
+        require_internal_api_key = _boolean(
+            "REQUIRE_INTERNAL_API_KEY", False
+        )
+        if require_internal_api_key and internal_api_key is None:
+            raise ValueError(
+                "INTERNAL_API_KEY must be set when REQUIRE_INTERNAL_API_KEY=true"
+            )
+
         return cls(
-            internal_api_key=os.getenv("INTERNAL_API_KEY") or None,
+            internal_api_key=internal_api_key,
+            require_internal_api_key=require_internal_api_key,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             request_timeout_seconds=_floating_point("REQUEST_TIMEOUT_SECONDS", 15.0),
             model_queue_timeout_seconds=_floating_point(
@@ -99,6 +112,7 @@ class Settings:
             ),
             stt_max_audio_bytes=_integer("STT_MAX_AUDIO_BYTES", 10_000_000),
             stt_max_concurrency=max(1, _integer("STT_MAX_CONCURRENCY", 1)),
+            stt_timeout_seconds=_floating_point("STT_TIMEOUT_SECONDS", 10.0),
             tts_model=os.getenv("HF_TTS_MODEL", "openbmb/VoxCPM2"),
             tts_device=os.getenv("TTS_DEVICE", "cuda"),
             tts_optimize=_boolean("TTS_OPTIMIZE", True),
@@ -112,6 +126,7 @@ class Settings:
             tts_chunk_chars=_integer("TTS_CHUNK_CHARS", 200),
             tts_pause_ms=_integer("TTS_PAUSE_MS", 120),
             tts_max_concurrency=max(1, _integer("TTS_MAX_CONCURRENCY", 1)),
+            tts_timeout_seconds=_floating_point("TTS_TIMEOUT_SECONDS", 12.0),
         )
 
 
