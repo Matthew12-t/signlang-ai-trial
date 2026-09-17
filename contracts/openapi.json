@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Isyara AI Services",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "paths": {
     "/v1/stt/transcriptions": {
@@ -269,6 +269,215 @@
         }
       }
     },
+    "/v1/recall/query": {
+      "post": {
+        "tags": [
+          "recall"
+        ],
+        "summary": "Query Recall",
+        "operationId": "query_recall_v1_recall_query_post",
+        "security": [
+          {
+            "InternalApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallQueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallQueryResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "413": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        }
+      }
+    },
     "/health/live": {
       "get": {
         "tags": [
@@ -499,6 +708,30 @@
         ],
         "title": "ErrorEnvelope"
       },
+      "Evidence": {
+        "properties": {
+          "entryId": {
+            "type": "string",
+            "title": "Entryid"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Startedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entryId",
+          "quote",
+          "startedAt"
+        ],
+        "title": "Evidence"
+      },
       "GlossNormalizeRequest": {
         "properties": {
           "utteranceId": {
@@ -614,6 +847,121 @@
         ],
         "title": "ModelDescriptor"
       },
+      "RecallOptions": {
+        "properties": {
+          "maxAnswerTokens": {
+            "type": "integer",
+            "maximum": 512.0,
+            "minimum": 32.0,
+            "title": "Maxanswertokens",
+            "default": 160
+          },
+          "requireEvidence": {
+            "type": "boolean",
+            "title": "Requireevidence",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "RecallOptions"
+      },
+      "RecallQueryRequest": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sessionid"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "language": {
+            "type": "string",
+            "const": "en",
+            "title": "Language",
+            "default": "en"
+          },
+          "contextEntries": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptEntry"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Contextentries"
+          },
+          "options": {
+            "$ref": "#/components/schemas/RecallOptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId",
+          "query"
+        ],
+        "title": "RecallQueryRequest"
+      },
+      "RecallQueryResponse": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "grounded": {
+            "type": "boolean",
+            "title": "Grounded"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "notFoundReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "NOT_IN_CONTEXT",
+                  "EMPTY_CONTEXT",
+                  "EVIDENCE_VALIDATION_FAILED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notfoundreason"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDescriptor"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Latencyms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "answer",
+          "grounded",
+          "evidence",
+          "notFoundReason",
+          "model",
+          "latencyMs"
+        ],
+        "title": "RecallQueryResponse"
+      },
       "SynthesisRequest": {
         "properties": {
           "text": {
@@ -647,6 +995,67 @@
           "text"
         ],
         "title": "SynthesisRequest"
+      },
+      "TranscriptEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "speech",
+              "sign"
+            ],
+            "title": "Source"
+          },
+          "speaker": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Startedat"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Endedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sequence",
+          "source",
+          "text",
+          "startedAt",
+          "endedAt"
+        ],
+        "title": "TranscriptEntry"
       },
       "TranscriptionResponse": {
         "properties": {

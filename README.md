@@ -233,6 +233,28 @@ Example environment values are documented in `.env.example`. A different LLM API
 added by implementing the provider-neutral `ChatProvider` interface and wiring that
 adapter in `src.main.create_app`.
 
+## Conversation Recall Service
+
+Enable Recall by adding `recall` to `ENABLED_SERVICES`, then call
+`POST /v1/recall/query`. Each request supplies its own English transcript entries, so
+the service stores no conversation state. Entries are ordered by sequence and the
+oldest complete entries are dropped when they exceed `RECALL_MAX_CONTEXT_CHARS`; a
+single oversized entry returns `413 PAYLOAD_TOO_LARGE`.
+
+Recall uses `HF_RECALL_MODEL` (default `Qwen/Qwen3-8B`) through the same
+provider-neutral `ChatProvider`. Answers are returned only when their evidence IDs and
+quotes validate against the supplied context. Empty context bypasses the model and
+returns `EMPTY_CONTEXT`; invalid evidence returns `EVIDENCE_VALIDATION_FAILED`.
+Hugging Face hosted credits and model availability may be limited.
+
+The optional live test requires both variables and is never part of the normal suite:
+
+```powershell
+$env:RUN_HF_RECALL_SMOKE = "1"
+$env:HF_TOKEN = "your-token"
+python -m pytest tests/smoke/test_huggingface_recall.py -m smoke
+```
+
 ## Pengujian
 
 ```powershell

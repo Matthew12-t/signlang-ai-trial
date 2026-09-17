@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from src.main import create_app
@@ -163,3 +166,9 @@ def test_openapi_documents_recall_contract() -> None:
     assert operation["security"] == [{"InternalApiKey": []}, {}]
     for status in ("200", "400", "401", "413", "422", "429", "502", "503", "504"):
         assert "X-Request-ID" in operation["responses"][status]["headers"]
+
+
+def test_committed_openapi_matches_runtime_contract() -> None:
+    committed = json.loads(Path("contracts/openapi.json").read_text(encoding="utf-8"))
+
+    assert committed == create_app(settings()).openapi()
