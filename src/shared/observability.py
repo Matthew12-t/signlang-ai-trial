@@ -1,16 +1,51 @@
-"""Minimal standard-library logging configuration."""
+"""Request correlation and concise operational logging."""
+
+from __future__ import annotations
 
 import logging
+import time
+from uuid import uuid4
+
+from fastapi import FastAPI, Request
 
 
 def configure_logging(level: str) -> None:
-    resolved_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
-        level=resolved_level,
+        level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+
+
+def _valid_request_id(value: str | None) -> str:
+    if value is None:
+        return str(uuid4())
+    normalized = value.strip()
+    if not normalized or len(normalized) > 128:
+        return str(uuid4())
+    return normalized
 
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
+
+def install_request_middleware(app: FastAPI) -> None:
+    logger = logging.getLogger("isyara.requests")
+
+    @app.middleware("http")
+    async def request_context(request: Request, call_next):
+        request_id = _valid_request_id(request.headers.get("X-Request-ID"))
+        request.state.request_id = request_id
+        started = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(
+            "%s %s status=%s latencyMs=%s requestId=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            request_id,
+        )
+        return response

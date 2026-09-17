@@ -1,4 +1,15 @@
-.pytest_cache/
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest-tmp*/
+.venv*/
+venv/
 .env
+*.db
+.cache/
+models/*.pt
+models/*.pth
+models/*.jit
+models/**/*.safetensors
+models/**/config.json

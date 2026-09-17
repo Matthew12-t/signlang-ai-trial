@@ -1,28 +1,28 @@
+"""FastAPI entrypoint for Isyara AI Services."""
+
+from __future__ import annotations
+
 import hmac
-from collections.abc import Awaitable, Callable
-from typing import Annotated
-from uuid import uuid4
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated, AsyncIterator
 
 from fastapi import FastAPI, Header, Request
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import Response
 
 from src.gloss.api import router as gloss_router
 from src.gloss.service import GlossService
 from src.shared.config import Settings, get_settings
-from src.shared.errors import (
-    AppError,
-    app_error_handler,
-    error_response,
-    http_exception_handler,
-    request_validation_error_handler,
-)
-from src.shared.observability import configure_logging, get_logger
+from src.shared.errors import AppError, error_response, register_error_handlers
+from src.shared.observability import configure_logging, install_request_middleware
+from src.shared.providers.faster_whisper import FasterWhisperProvider
 from src.shared.providers.huggingface import HuggingFaceChatProvider
+from src.shared.providers.voxcpm import VoxCPMProvider
+from src.stt.api import router as stt_router
+from src.stt.service import STTService
+from src.tts.api import router as tts_router
+from src.tts.service import TTSService
 
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 _health_responses = {
     200: {
@@ -48,103 +48,117 @@ def _canonical_request_path(request: Request) -> str:
     return path
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    resolved = settings or get_settings()
-    configure_logging(resolved.log_level)
-    application = FastAPI(title="Isyara AI Services", version="0.1.0")
-    application.state.settings = resolved
+def create_app(
+    settings: Settings | None = None,
+    *,
+    stt_service: STTService | None = None,
+    tts_service: TTSService | None = None,
+) -> FastAPI:
+    runtime_settings = settings or get_settings()
+    configure_logging(runtime_settings.log_level)
 
-    provider = None
-    if resolved.gloss_mode == "qwen" and resolved.hf_token is not None:
-        provider = HuggingFaceChatProvider.from_settings(resolved)
-    application.state.gloss_service = GlossService(resolved, provider)
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        if application.state.stt_service is None and "stt" in runtime_settings.enabled_services:
+            stt_provider = FasterWhisperProvider(runtime_settings)
+            application.state.stt_service = STTService(stt_provider, runtime_settings)
+            if runtime_settings.preload_models:
+                try:
+                    await stt_provider.load()
+                except Exception:
+                    logger.exception("STT started in degraded mode")
+
+        if application.state.tts_service is None and "tts" in runtime_settings.enabled_services:
+            tts_provider = VoxCPMProvider(runtime_settings)
+            application.state.tts_service = TTSService(tts_provider, runtime_settings)
+            if runtime_settings.preload_models:
+                try:
+                    await tts_provider.load()
+                except Exception:
+                    logger.exception("TTS started in degraded mode")
+        yield
+
+    application = FastAPI(
+        title="Isyara AI Services",
+        version="0.3.0",
+        lifespan=lifespan,
+    )
+    application.state.settings = runtime_settings
+    application.state.stt_service = stt_service
+    application.state.tts_service = tts_service
+
+    gloss_provider = None
+    if runtime_settings.gloss_mode == "qwen" and runtime_settings.hf_token is not None:
+        gloss_provider = HuggingFaceChatProvider.from_settings(runtime_settings)
+    application.state.gloss_service = GlossService(runtime_settings, gloss_provider)
+
+    register_error_handlers(application)
 
     @application.middleware("http")
-    async def request_context_middleware(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        supplied_request_id = request.headers.get("X-Request-ID", "").strip()
-        request_id = (
-            supplied_request_id
-            if supplied_request_id and len(supplied_request_id) <= 128
-            else str(uuid4())
-        )
-        request.state.request_id = request_id
-
-        configured_key = resolved.internal_api_key
+    async def authenticate_gloss(request: Request, call_next):
+        configured_key = runtime_settings.internal_api_key
         is_gloss_normalize = (
             request.method == "POST"
             and _canonical_request_path(request) == "/v1/gloss/normalize"
         )
         if configured_key is not None and is_gloss_normalize:
-            expected = configured_key.get_secret_value().encode("utf-8")
+            expected = configured_key.encode("utf-8")
             provided = request.headers.get("X-Internal-API-Key", "").encode("utf-8")
             if not hmac.compare_digest(expected, provided):
-                logger.warning(
-                    "gloss_auth request_id=%s mode=%s status=401",
-                    request_id,
-                    resolved.gloss_mode,
-                )
-                response = error_response(
+                return error_response(
                     request,
                     AppError("UNAUTHORIZED", "Authentication is required.", 401),
                 )
-                response.headers["X-Request-ID"] = request_id
-                return response
+        return await call_next(request)
 
-        try:
-            response = await call_next(request)
-        except Exception:
-            logger.error(
-                "request_failed request_id=%s path=%s status=500",
-                request_id,
-                request.url.path,
-            )
-            response = error_response(
-                request,
-                AppError("INTERNAL_ERROR", "An internal error occurred.", 500),
-            )
-        response.headers["X-Request-ID"] = request_id
-        return response
-
-    application.add_exception_handler(AppError, app_error_handler)
-    application.add_exception_handler(RequestValidationError, request_validation_error_handler)
-    application.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    install_request_middleware(application)
+    application.include_router(stt_router)
+    application.include_router(tts_router)
     application.include_router(gloss_router)
 
-    @application.get("/health/live", responses=_health_responses)
+    @application.get("/health/live", tags=["Health"], responses=_health_responses)
     async def live(
         _request_id: Annotated[
             str | None,
-            Header(
-                alias="X-Request-ID",
-                description="Optional request ID; invalid values are replaced with a UUID.",
-            ),
+            Header(alias="X-Request-ID", description="Optional request ID."),
         ] = None,
     ) -> dict[str, str]:
         return {"status": "ok", "service": "isyara-ai-services"}
 
-    @application.get("/health/ready", responses=_health_responses)
+    @application.get("/health/ready", tags=["Health"], responses=_health_responses)
     async def ready(
         _request_id: Annotated[
             str | None,
-            Header(
-                alias="X-Request-ID",
-                description="Optional request ID; invalid values are replaced with a UUID.",
-            ),
+            Header(alias="X-Request-ID", description="Optional request ID."),
         ] = None,
     ) -> dict[str, object]:
-        llm_ready = resolved.hf_token is not None
-        gloss_status = "ready"
-        status = "ready"
-        if resolved.gloss_mode == "qwen" and not llm_ready:
-            gloss_status = "llm_unavailable"
-            status = "degraded"
+        checks: dict[str, str] = {}
+        for service_name in ("stt", "tts"):
+            if service_name not in runtime_settings.enabled_services:
+                continue
+            service = getattr(application.state, f"{service_name}_service", None)
+            checks[service_name] = (
+                "ready" if service is not None and service.ready else "unavailable"
+            )
+        if "gloss" in runtime_settings.enabled_services:
+            checks["configuration"] = "ok"
+            checks["gloss"] = (
+                "llm_unavailable"
+                if runtime_settings.gloss_mode == "qwen"
+                and runtime_settings.hf_token is None
+                else "ready"
+            )
+        all_ready = all(
+            value in {"ready", "ok"} for value in checks.values()
+        )
         return {
-            "status": status,
-            "service": "isyara-ai-services",
-            "checks": {"configuration": "ok", "gloss": gloss_status},
+            "status": "ready" if all_ready else "degraded",
+            "service": (
+                "isyara-ai-services"
+                if "gloss" in runtime_settings.enabled_services
+                else "ai-services"
+            ),
+            "checks": checks,
         }
 
     return application

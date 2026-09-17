@@ -1,0 +1,15 @@
+# Runtime pins validated against the Sign Service development environment.
+# The CUDA wheel is sourced from the official PyTorch CUDA 11.8 index.
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+fastapi==0.141.1
+numpy==1.26.4
+opencv-contrib-python==4.11.0.86
+python-multipart==0.0.32
+uvicorn[standard]==0.53.0
+
+mediapipe==0.10.21
+PyYAML==6.0.3
+safetensors==0.8.0
+tqdm==4.70.1
+torch==2.7.1+cu118

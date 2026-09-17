@@ -36,7 +36,7 @@ class HuggingFaceChatProvider:
 
         client = InferenceClient(
             provider=settings.hf_provider,
-            api_key=settings.hf_token.get_secret_value(),
+            api_key=settings.hf_token,
             timeout=settings.request_timeout_seconds,
         )
         return cls(

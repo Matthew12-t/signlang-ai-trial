@@ -2,9 +2,136 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Isyara AI Services",
-    "version": "0.1.0"
+    "version": "0.3.0"
   },
   "paths": {
+    "/v1/stt/transcriptions": {
+      "post": {
+        "tags": [
+          "Speech-to-Text"
+        ],
+        "summary": "Create Transcription",
+        "operationId": "create_transcription_v1_stt_transcriptions_post",
+        "parameters": [
+          {
+            "name": "X-Internal-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Internal-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_transcription_v1_stt_transcriptions_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tts/synthesize": {
+      "post": {
+        "tags": [
+          "Text-to-Speech"
+        ],
+        "summary": "Synthesize Speech",
+        "operationId": "synthesize_speech_v1_tts_synthesize_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Internal-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Internal-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SynthesisRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "audio/wav": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/gloss/normalize": {
       "post": {
         "tags": [
@@ -144,6 +271,9 @@
     },
     "/health/live": {
       "get": {
+        "tags": [
+          "Health"
+        ],
         "summary": "Live",
         "operationId": "live_health_live_get",
         "parameters": [
@@ -160,10 +290,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "description": "Optional request ID.",
               "title": "X-Request-Id"
             },
-            "description": "Optional request ID; invalid values are replaced with a UUID."
+            "description": "Optional request ID."
           }
         ],
         "responses": {
@@ -204,6 +334,9 @@
     },
     "/health/ready": {
       "get": {
+        "tags": [
+          "Health"
+        ],
         "summary": "Ready",
         "operationId": "ready_health_ready_get",
         "parameters": [
@@ -220,10 +353,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "description": "Optional request ID.",
               "title": "X-Request-Id"
             },
-            "description": "Optional request ID; invalid values are replaced with a UUID."
+            "description": "Optional request ID."
           }
         ],
         "responses": {
@@ -263,6 +396,35 @@
   },
   "components": {
     "schemas": {
+      "Body_create_transcription_v1_stt_transcriptions_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "encoding": {
+            "type": "string",
+            "title": "Encoding",
+            "default": "wav"
+          },
+          "timestamps": {
+            "type": "boolean",
+            "title": "Timestamps",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_create_transcription_v1_stt_transcriptions_post"
+      },
       "ConfirmedSignToken": {
         "properties": {
           "id": {
@@ -433,6 +595,121 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ModelDescriptor": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "id"
+        ],
+        "title": "ModelDescriptor"
+      },
+      "SynthesisRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "wav"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SynthesisRequest"
+      },
+      "TranscriptionResponse": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptionSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDescriptor"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "title": "Latencyms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "text",
+          "language",
+          "segments",
+          "model",
+          "latencyMs"
+        ],
+        "title": "TranscriptionResponse"
+      },
+      "TranscriptionSegment": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "startMs": {
+            "type": "integer",
+            "title": "Startms"
+          },
+          "endMs": {
+            "type": "integer",
+            "title": "Endms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "startMs",
+          "endMs"
+        ],
+        "title": "TranscriptionSegment"
       },
       "ValidationError": {
         "properties": {
