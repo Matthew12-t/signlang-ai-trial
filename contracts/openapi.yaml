@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Isyara AI Services
   version: 0.2.0
-  description: Internal REST contract for the Isyara STT and TTS services.
+  description: Manually maintained internal REST reference for Isyara STT and TTS. See openapi.json for the generated unified runtime contract, including Gloss and Recall.
 servers:
   - url: http://127.0.0.1:8001
 paths:

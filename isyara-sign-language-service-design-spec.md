@@ -1,9 +1,9 @@
 # Isyara Sign Language Service — Design Specification
 
-Status: Final v1.1  
-Target: MVP Hackathon IFEST 2026  
-Pemilik: tim Sign Language Recognition  
-Runtime target: laptop dengan NVIDIA RTX 3060  
+Status: Final v1.1
+Target: MVP Hackathon IFEST 2026
+Pemilik: tim Sign Language Recognition
+Runtime target: laptop dengan NVIDIA RTX 3060
 Bahasa/vocabulary awal: Inggris, 10–20 isolated signs
 
 ## 1. Posisi Dokumen

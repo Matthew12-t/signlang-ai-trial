@@ -1,6 +1,6 @@
 # Isyara AI Services — Design and API Contract
 
-Status: Draft v0.3  
+Status: Draft v0.3
 Target: MVP Hackathon IFEST 2026  
 Audience: tim software engineering dan tim AI  
 Bahasa demo awal: Inggris

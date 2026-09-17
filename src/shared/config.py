@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
+from typing import Literal
 
 
 def _boolean(name: str, default: bool) -> bool:
@@ -37,40 +38,61 @@ class Settings:
     clients while downloading model artifacts.
     """
 
-    internal_api_key: str | None
-    log_level: str
-    request_timeout_seconds: float
-    model_queue_timeout_seconds: float
-    enabled_services: tuple[str, ...]
-    preload_models: bool
+    internal_api_key: str | None = None
+    log_level: str = "INFO"
+    request_timeout_seconds: float = 15.0
+    model_queue_timeout_seconds: float = 2.0
+    enabled_services: tuple[str, ...] = ("gloss",)
+    preload_models: bool = True
 
-    hf_token: str | None
-    model_cache_dir: str | None
+    hf_token: str | None = None
+    model_cache_dir: str | None = None
 
-    stt_model: str
-    stt_device: str
-    stt_compute_type: str
-    stt_beam_size: int
-    stt_allowed_languages: tuple[str, ...]
-    stt_vad_filter: bool
-    stt_min_silence_ms: int
-    stt_condition_on_previous_text: bool
-    stt_max_audio_bytes: int
-    stt_max_concurrency: int
+    stt_model: str = "Systran/faster-whisper-large-v3"
+    stt_device: str = "cuda"
+    stt_compute_type: str = "float16"
+    stt_beam_size: int = 5
+    stt_allowed_languages: tuple[str, ...] = ("en",)
+    stt_vad_filter: bool = True
+    stt_min_silence_ms: int = 500
+    stt_condition_on_previous_text: bool = False
+    stt_max_audio_bytes: int = 10_000_000
+    stt_max_concurrency: int = 1
 
-    tts_model: str
-    tts_device: str
-    tts_optimize: bool
-    tts_load_denoiser: bool
-    tts_normalize: bool
-    tts_cfg_value: float
-    tts_inference_timesteps: int
-    tts_seed: int
-    tts_allowed_languages: tuple[str, ...]
-    tts_max_text_chars: int
-    tts_chunk_chars: int
-    tts_pause_ms: int
-    tts_max_concurrency: int
+    tts_model: str = "openbmb/VoxCPM2"
+    tts_device: str = "cuda"
+    tts_optimize: bool = True
+    tts_load_denoiser: bool = False
+    tts_normalize: bool = True
+    tts_cfg_value: float = 2.0
+    tts_inference_timesteps: int = 10
+    tts_seed: int = 42
+    tts_allowed_languages: tuple[str, ...] = ("en", "id")
+    tts_max_text_chars: int = 500
+    tts_chunk_chars: int = 200
+    tts_pause_ms: int = 120
+    tts_max_concurrency: int = 1
+
+    llm_backend: Literal["huggingface"] = "huggingface"
+    llm_model: str = "Qwen/Qwen3-4B"
+    hf_provider: str = "auto"
+    hf_use_structured_output: bool = False
+    gloss_mode: Literal["template", "qwen"] = "template"
+    gloss_max_tokens: int = 64
+    gloss_llm_max_output_tokens: int = 96
+    recall_model: str = "Qwen/Qwen3-8B"
+    recall_max_context_chars: int = 24_000
+    recall_max_answer_tokens: int = 512
+    recall_temperature: float = 0.0
+
+    # Compatibility with the former BaseSettings constructor used by offline tests.
+    _env_file: str | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.hf_token is not None and not self.hf_token.strip():
+            object.__setattr__(self, "hf_token", None)
+        if self.internal_api_key is not None and not self.internal_api_key.strip():
+            object.__setattr__(self, "internal_api_key", None)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -112,6 +134,19 @@ class Settings:
             tts_chunk_chars=_integer("TTS_CHUNK_CHARS", 200),
             tts_pause_ms=_integer("TTS_PAUSE_MS", 120),
             tts_max_concurrency=max(1, _integer("TTS_MAX_CONCURRENCY", 1)),
+            llm_backend="huggingface",
+            llm_model=os.getenv("LLM_MODEL", "Qwen/Qwen3-4B"),
+            hf_provider=os.getenv("HF_PROVIDER", "auto"),
+            hf_use_structured_output=_boolean("HF_USE_STRUCTURED_OUTPUT", False),
+            gloss_mode=os.getenv("GLOSS_MODE", "template"),
+            gloss_max_tokens=_integer("GLOSS_MAX_TOKENS", 64),
+            gloss_llm_max_output_tokens=_integer(
+                "GLOSS_LLM_MAX_OUTPUT_TOKENS", 96
+            ),
+            recall_model=os.getenv("HF_RECALL_MODEL", "Qwen/Qwen3-8B"),
+            recall_max_context_chars=_integer("RECALL_MAX_CONTEXT_CHARS", 24_000),
+            recall_max_answer_tokens=_integer("RECALL_MAX_ANSWER_TOKENS", 512),
+            recall_temperature=_floating_point("RECALL_TEMPERATURE", 0.0),
         )
 
 

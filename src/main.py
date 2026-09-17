@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Request
 
+from src.gloss.api import router as gloss_router
+from src.gloss.service import GlossService
+from src.recall.api import router as recall_router
+from src.recall.retrieval import ProvidedContextRetriever
+from src.recall.service import RecallService
 from src.shared.config import Settings, get_settings
-from src.shared.errors import register_error_handlers
+from src.shared.errors import AppError, error_response, register_error_handlers
 from src.shared.observability import configure_logging, install_request_middleware
 from src.shared.providers.faster_whisper import FasterWhisperProvider
+from src.shared.providers.huggingface import HuggingFaceChatProvider
 from src.shared.providers.voxcpm import VoxCPMProvider
 from src.stt.api import router as stt_router
 from src.stt.service import STTService
@@ -20,10 +27,33 @@ from src.tts.service import TTSService
 
 logger = logging.getLogger(__name__)
 
+_health_responses = {
+    200: {
+        "headers": {
+            "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {"type": "string"},
+            }
+        }
+    }
+}
+
+
+def _canonical_request_path(request: Request) -> str:
+    path = request.scope["path"]
+    root_path = request.scope.get("root_path", "").rstrip("/")
+    if not root_path:
+        return path
+    if path == root_path:
+        return "/"
+    if path.startswith(f"{root_path}/"):
+        return path[len(root_path) :]
+    return path
+
 
 def create_app(
-    *,
     settings: Settings | None = None,
+    *,
     stt_service: STTService | None = None,
     tts_service: TTSService | None = None,
 ) -> FastAPI:
@@ -53,38 +83,104 @@ def create_app(
 
     application = FastAPI(
         title="Isyara AI Services",
-        version="0.2.0",
+        version="0.4.0",
         lifespan=lifespan,
     )
     application.state.settings = runtime_settings
     application.state.stt_service = stt_service
     application.state.tts_service = tts_service
+
+    gloss_provider = None
+    if runtime_settings.gloss_mode == "qwen" and runtime_settings.hf_token is not None:
+        gloss_provider = HuggingFaceChatProvider.from_settings(runtime_settings)
+    application.state.gloss_service = GlossService(runtime_settings, gloss_provider)
+
+    recall_provider = None
+    if "recall" in runtime_settings.enabled_services and runtime_settings.hf_token is not None:
+        recall_provider = HuggingFaceChatProvider.from_settings(
+            runtime_settings, model=runtime_settings.recall_model
+        )
+    application.state.recall_service = RecallService(
+        provider=recall_provider,
+        retriever=ProvidedContextRetriever(),
+        model=runtime_settings.recall_model,
+        max_context_chars=runtime_settings.recall_max_context_chars,
+        max_answer_tokens=runtime_settings.recall_max_answer_tokens,
+        temperature=runtime_settings.recall_temperature,
+    )
+
     register_error_handlers(application)
+
+    @application.middleware("http")
+    async def authenticate_internal_llm_routes(request: Request, call_next):
+        configured_key = runtime_settings.internal_api_key
+        protected_path = _canonical_request_path(request) in {
+            "/v1/gloss/normalize",
+            "/v1/recall/query",
+        }
+        if configured_key is not None and request.method == "POST" and protected_path:
+            expected = configured_key.encode("utf-8")
+            provided = request.headers.get("X-Internal-API-Key", "").encode("utf-8")
+            if not hmac.compare_digest(expected, provided):
+                return error_response(
+                    request,
+                    AppError("UNAUTHORIZED", "Authentication is required.", 401),
+                )
+        return await call_next(request)
+
     install_request_middleware(application)
     application.include_router(stt_router)
     application.include_router(tts_router)
+    application.include_router(gloss_router)
+    application.include_router(recall_router)
 
-    @application.get("/health/live", tags=["Health"])
-    async def live() -> dict[str, str]:
-        return {"status": "live", "service": "ai-services"}
+    @application.get("/health/live", tags=["Health"], responses=_health_responses)
+    async def live(
+        _request_id: Annotated[
+            str | None,
+            Header(alias="X-Request-ID", description="Optional request ID."),
+        ] = None,
+    ) -> dict[str, str]:
+        return {"status": "ok", "service": "isyara-ai-services"}
 
-    @application.get("/health/ready", tags=["Health"])
-    async def ready() -> dict[str, object]:
+    @application.get("/health/ready", tags=["Health"], responses=_health_responses)
+    async def ready(
+        _request_id: Annotated[
+            str | None,
+            Header(alias="X-Request-ID", description="Optional request ID."),
+        ] = None,
+    ) -> dict[str, object]:
         checks: dict[str, str] = {}
         for service_name in ("stt", "tts"):
             if service_name not in runtime_settings.enabled_services:
-                checks[service_name] = "disabled"
                 continue
             service = getattr(application.state, f"{service_name}_service", None)
             checks[service_name] = (
                 "ready" if service is not None and service.ready else "unavailable"
             )
+        if "gloss" in runtime_settings.enabled_services:
+            checks["configuration"] = "ok"
+            checks["gloss"] = (
+                "llm_unavailable"
+                if runtime_settings.gloss_mode == "qwen"
+                and runtime_settings.hf_token is None
+                else "ready"
+            )
+        if "recall" in runtime_settings.enabled_services:
+            checks["configuration"] = "ok"
+            checks["recall"] = (
+                "llm_unavailable" if runtime_settings.hf_token is None else "ready"
+            )
         all_ready = all(
-            value in {"ready", "disabled"} for value in checks.values()
+            value in {"ready", "ok"} for value in checks.values()
         )
         return {
             "status": "ready" if all_ready else "degraded",
-            "service": "ai-services",
+            "service": (
+                "isyara-ai-services"
+                if {"gloss", "recall"} & set(runtime_settings.enabled_services)
+                else "ai-services"
+            ),
             "checks": checks,
         }
 

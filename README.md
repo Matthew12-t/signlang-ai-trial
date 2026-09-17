@@ -202,6 +202,59 @@ Jika `INTERNAL_API_KEY` diisi, tambahkan header
 `X-Internal-API-Key` pada request. Video hanya digunakan selama request dan
 tidak disimpan oleh service secara default.
 
+## Gloss Normalization Service
+
+The Gloss service converts confirmed English sign tokens into concise English text.
+Enable it with `ENABLED_SERVICES=gloss` (or add `gloss` to the existing comma-separated
+service list) and call:
+
+```text
+POST /v1/gloss/normalize
+```
+
+`GLOSS_MODE=template` is the default and never calls a hosted model. It uses exact,
+deterministic rules and a safe generic fallback. `GLOSS_MODE=qwen` enables the optional
+Qwen adapter through Hugging Face Inference Providers, using `LLM_MODEL`, `HF_PROVIDER`,
+and `HF_TOKEN`. Hosted inference free-tier credit is limited and provider/model
+availability can change.
+
+Provider failures, timeouts, rate limits, invalid JSON, invalid provenance, and rejected
+model text fall back to deterministic normalization with a stable warning code. Normal
+tests never use the network. The live Hugging Face smoke test runs only when both
+`RUN_HF_SMOKE=1` and `HF_TOKEN` are present and succeeds only for an accepted Qwen result.
+
+Set `INTERNAL_API_KEY` to require `X-Internal-API-Key` on internal endpoints. Gloss
+responses include `X-Request-ID`; request validation uses the shared error envelope.
+The generated unified runtime contract is available at `contracts/openapi.json` and
+FastAPI `/openapi.json`. `contracts/openapi.yaml` remains the manually maintained STT/TTS
+reference inherited from the main branch.
+
+Example environment values are documented in `.env.example`. A different LLM API can be
+added by implementing the provider-neutral `ChatProvider` interface and wiring that
+adapter in `src.main.create_app`.
+
+## Conversation Recall Service
+
+Enable Recall by adding `recall` to `ENABLED_SERVICES`, then call
+`POST /v1/recall/query`. Each request supplies its own English transcript entries, so
+the service stores no conversation state. Entries are ordered by sequence and the
+oldest complete entries are dropped when they exceed `RECALL_MAX_CONTEXT_CHARS`; a
+single oversized entry returns `413 PAYLOAD_TOO_LARGE`.
+
+Recall uses `HF_RECALL_MODEL` (default `Qwen/Qwen3-8B`) through the same
+provider-neutral `ChatProvider`. Answers are returned only when their evidence IDs and
+quotes validate against the supplied context. Empty context bypasses the model and
+returns `EMPTY_CONTEXT`; invalid evidence returns `EVIDENCE_VALIDATION_FAILED`.
+Hugging Face hosted credits and model availability may be limited.
+
+The optional live test requires both variables and is never part of the normal suite:
+
+```powershell
+$env:RUN_HF_RECALL_SMOKE = "1"
+$env:HF_TOKEN = "your-token"
+python -m pytest tests/smoke/test_huggingface_recall.py -m smoke
+```
+
 ## Pengujian
 
 ```powershell

@@ -1,6 +1,6 @@
 # Isyara Application Server — Design and API Contract
 
-Status: Draft v0.2  
+Status: Draft v0.2
 Target: MVP Hackathon IFEST 2026  
 Implementasi acuan: Python REST API  
 Audience: tim software engineering dan tim AI

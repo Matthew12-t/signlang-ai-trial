@@ -26,7 +26,6 @@ class BrowserLocalCORSMiddleware:
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["Content-Type", "X-Request-ID"],
             allow_credentials=False,
-            allow_private_network=allow_private_network,
         )
 
     async def __call__(self, scope, receive, send):

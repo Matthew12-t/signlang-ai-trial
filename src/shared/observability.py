@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 
@@ -17,12 +17,16 @@ def configure_logging(level: str) -> None:
 
 
 def _valid_request_id(value: str | None) -> str:
-    if not value:
+    if value is None:
         return str(uuid4())
-    try:
-        return str(UUID(value))
-    except ValueError:
+    normalized = value.strip()
+    if not normalized or len(normalized) > 128:
         return str(uuid4())
+    return normalized
+
+
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
 
 
 def install_request_middleware(app: FastAPI) -> None:

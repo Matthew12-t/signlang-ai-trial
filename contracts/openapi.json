@@ -1,0 +1,1173 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Isyara AI Services",
+    "version": "0.4.0"
+  },
+  "paths": {
+    "/v1/stt/transcriptions": {
+      "post": {
+        "tags": [
+          "Speech-to-Text"
+        ],
+        "summary": "Create Transcription",
+        "operationId": "create_transcription_v1_stt_transcriptions_post",
+        "parameters": [
+          {
+            "name": "X-Internal-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Internal-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_transcription_v1_stt_transcriptions_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tts/synthesize": {
+      "post": {
+        "tags": [
+          "Text-to-Speech"
+        ],
+        "summary": "Synthesize Speech",
+        "operationId": "synthesize_speech_v1_tts_synthesize_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Internal-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Internal-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SynthesisRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "audio/wav": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/gloss/normalize": {
+      "post": {
+        "tags": [
+          "gloss"
+        ],
+        "summary": "Normalize Gloss",
+        "operationId": "normalize_gloss_v1_gloss_normalize_post",
+        "security": [
+          {
+            "InternalApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID; invalid values are replaced with a UUID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID; invalid values are replaced with a UUID."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GlossNormalizeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossNormalizeResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request body or parameters.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid configured internal API key.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request exceeds the configured token limit.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The requested language is unsupported.",
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/recall/query": {
+      "post": {
+        "tags": [
+          "recall"
+        ],
+        "summary": "Query Recall",
+        "operationId": "query_recall_v1_recall_query_post",
+        "security": [
+          {
+            "InternalApiKey": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallQueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallQueryResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "413": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Live",
+        "operationId": "live_health_live_get",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Live Health Live Get"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Ready",
+        "operationId": "ready_health_ready_get",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional request ID.",
+              "title": "X-Request-Id"
+            },
+            "description": "Optional request ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Ready Health Ready Get"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-ID": {
+                "description": "Caller-supplied request ID or a generated UUID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_create_transcription_v1_stt_transcriptions_post": {
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "encoding": {
+            "type": "string",
+            "title": "Encoding",
+            "default": "wav"
+          },
+          "timestamps": {
+            "type": "boolean",
+            "title": "Timestamps",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "audio"
+        ],
+        "title": "Body_create_transcription_v1_stt_transcriptions_post"
+      },
+      "ConfirmedSignToken": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Confirmedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "confirmedAt"
+        ],
+        "title": "ConfirmedSignToken"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "retryable": {
+            "type": "boolean",
+            "title": "Retryable"
+          },
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "requestId",
+          "details"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope"
+      },
+      "Evidence": {
+        "properties": {
+          "entryId": {
+            "type": "string",
+            "title": "Entryid"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Startedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entryId",
+          "quote",
+          "startedAt"
+        ],
+        "title": "Evidence"
+      },
+      "GlossNormalizeRequest": {
+        "properties": {
+          "utteranceId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Utteranceid"
+          },
+          "language": {
+            "type": "string",
+            "const": "en",
+            "title": "Language"
+          },
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedSignToken"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "utteranceId",
+          "language",
+          "tokens"
+        ],
+        "title": "GlossNormalizeRequest"
+      },
+      "GlossNormalizeResponse": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "utteranceId": {
+            "type": "string",
+            "title": "Utteranceid"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "template",
+              "qwen"
+            ],
+            "title": "Method"
+          },
+          "sourceTokenIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sourcetokenids"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Latencyms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "utteranceId",
+          "text",
+          "method",
+          "sourceTokenIds",
+          "warnings",
+          "latencyMs"
+        ],
+        "title": "GlossNormalizeResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ModelDescriptor": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "id"
+        ],
+        "title": "ModelDescriptor"
+      },
+      "RecallOptions": {
+        "properties": {
+          "maxAnswerTokens": {
+            "type": "integer",
+            "maximum": 512.0,
+            "minimum": 32.0,
+            "title": "Maxanswertokens",
+            "default": 512
+          },
+          "requireEvidence": {
+            "type": "boolean",
+            "title": "Requireevidence",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "RecallOptions"
+      },
+      "RecallQueryRequest": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Sessionid"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query"
+          },
+          "language": {
+            "type": "string",
+            "const": "en",
+            "title": "Language",
+            "default": "en"
+          },
+          "contextEntries": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptEntry"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Contextentries"
+          },
+          "options": {
+            "$ref": "#/components/schemas/RecallOptions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId",
+          "query"
+        ],
+        "title": "RecallQueryRequest"
+      },
+      "RecallQueryResponse": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "grounded": {
+            "type": "boolean",
+            "title": "Grounded"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "notFoundReason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "NOT_IN_CONTEXT",
+                  "EMPTY_CONTEXT",
+                  "EVIDENCE_VALIDATION_FAILED"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notfoundreason"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDescriptor"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Latencyms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "answer",
+          "grounded",
+          "evidence",
+          "notFoundReason",
+          "model",
+          "latencyMs"
+        ],
+        "title": "RecallQueryResponse"
+      },
+      "SynthesisRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": "en"
+          },
+          "voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "wav"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SynthesisRequest"
+      },
+      "TranscriptEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sequence"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "speech",
+              "sign"
+            ],
+            "title": "Source"
+          },
+          "speaker": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Startedat"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Endedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sequence",
+          "source",
+          "text",
+          "startedAt",
+          "endedAt"
+        ],
+        "title": "TranscriptEntry"
+      },
+      "TranscriptionResponse": {
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "title": "Requestid"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "language": {
+            "type": "string",
+            "title": "Language"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptionSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDescriptor"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "title": "Latencyms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestId",
+          "text",
+          "language",
+          "segments",
+          "model",
+          "latencyMs"
+        ],
+        "title": "TranscriptionResponse"
+      },
+      "TranscriptionSegment": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "startMs": {
+            "type": "integer",
+            "title": "Startms"
+          },
+          "endMs": {
+            "type": "integer",
+            "title": "Endms"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "startMs",
+          "endMs"
+        ],
+        "title": "TranscriptionSegment"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "InternalApiKey": {
+        "type": "apiKey",
+        "description": "Required only when INTERNAL_API_KEY is configured.",
+        "in": "header",
+        "name": "X-Internal-API-Key"
+      }
+    }
+  }
+}
