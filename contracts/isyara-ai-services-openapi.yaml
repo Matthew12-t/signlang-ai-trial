@@ -1,14 +1,15 @@
 openapi: 3.1.0
 info:
-  title: Isyara AI Services Internal API
-  version: 0.1.0
+  title: Isyara AI Services API
+  version: 0.2.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   description: |
-    Internal HTTP contract between the Isyara Application API and AI services.
-    All MVP service-to-service communication uses REST. The Application API is
-    the only AI-service client exposed to the web client.
+    HTTP contracts for Isyara AI services. STT, TTS, Gloss, and Recall are
+    internal Application API dependencies. Sign prediction is an edge-local
+    exception called by the web client over loopback on the signer's laptop;
+    sign video never reaches the Application API.
 servers:
   - url: /
     description: Current AI service origin
@@ -61,6 +62,10 @@ paths:
       tags: [Sign]
       operationId: predictSign
       summary: Predict one isolated sign from one short video clip.
+      description: |
+        Called by the signer web client against the loopback Sign Service. The
+        browser-local demo mode does not require an internal API key.
+      security: []
       parameters:
         - $ref: "#/components/parameters/RequestId"
       requestBody:

@@ -1,6 +1,6 @@
 # Isyara Sign Language Service — Design Specification
 
-Status: Final v1.0  
+Status: Final v1.1  
 Target: MVP Hackathon IFEST 2026  
 Pemilik: tim Sign Language Recognition  
 Runtime target: laptop dengan NVIDIA RTX 3060  
@@ -8,14 +8,15 @@ Bahasa/vocabulary awal: Inggris, 10–20 isolated signs
 
 ## 1. Posisi Dokumen
 
-Dokumen ini merupakan spesifikasi implementasi khusus Sign Language Service. Dokumen ini tidak mengubah design Application Server atau AI Services yang telah difinalkan.
+Dokumen ini merupakan spesifikasi implementasi khusus Sign Language Service dan harus dibaca bersama design Application Server serta AI Services versi terbaru.
 
 Ketentuan integrasi yang diwarisi:
 
-- frontend hanya berkomunikasi dengan Application Server;
-- Application Server memanggil Sign Language Service melalui REST;
+- web client pada laptop penanda memanggil Sign Language Service melalui REST loopback;
+- Application Server tidak memanggil Sign Language Service dan tidak menerima video sign;
 - satu request prediksi merepresentasikan satu klip isolated sign;
 - Sign Language Service tidak menyimpan session, utterance, token, atau transcript;
+- web client melaporkan prediction ke Application Server;
 - prediction baru menjadi token setelah dikonfirmasi melalui Application Server;
 - hanya token terkonfirmasi yang dapat diteruskan ke Gloss, TTS, atau Recall.
 
@@ -65,7 +66,8 @@ Service dioptimalkan untuk demo yang stabil dan dapat diulang, bukan untuk conti
 
 ```mermaid
 flowchart LR
-    APP[Python Application Server] -->|multipart REST| API[Sign API]
+    CAMERA[Kamera laptop penanda] --> WEB[Web Client]
+    WEB -->|multipart REST\n127.0.0.1:8765| API[Sign API]
     API --> VALIDATE[Request Validator]
     VALIDATE --> DECODE[Video Decoder]
     DECODE --> SAMPLE[Frame Sampler]
@@ -74,9 +76,11 @@ flowchart LR
     MODEL --> RANK[Top-k Ranking]
     RANK --> POLICY[Confidence Policy]
     POLICY --> API
+    API -->|prediction JSON| WEB
+    WEB -->|prediction report JSON| APP[Application Server]
 ```
 
-Komponen API tidak mengetahui struktur database Application Server. Semua dependency model dimuat melalui configuration layer.
+Komponen API tidak mengetahui session, utterance, atau struktur database Application Server. Semua dependency model dimuat melalui configuration layer. Video hanya bergerak dari browser ke loopback pada laptop penanda.
 
 ## 5. Kontrak Input
 
@@ -99,8 +103,10 @@ Header:
 
 | Header | Wajib | Keterangan |
 |---|:---:|---|
-| `X-Request-ID` | ya | UUID dari Application Server untuk korelasi log |
-| `X-Internal-API-Key` | ya, kecuali mode development lokal | autentikasi antarlayanan |
+| `X-Request-ID` | ya | UUID dari web client untuk korelasi log lokal |
+| `X-Internal-API-Key` | tidak pada mode browser lokal | opsional untuk deployment private service-to-service; jangan ditanam dalam frontend |
+
+Service wajib bind ke `127.0.0.1` pada mode demo. CORS hanya mengizinkan origin web app yang dikonfigurasi secara eksplisit. Preflight `OPTIONS` harus mendukung `Content-Type` dan `X-Request-ID`; dukungan Private Network Access harus diuji pada browser demo. Jangan menggunakan wildcard origin bersama credential.
 
 Batas input default:
 
@@ -112,7 +118,7 @@ Batas input default:
 - tepat satu sign per klip;
 - tidak ada asumsi bahwa frame rate sumber selalu sama.
 
-Nilai batas dapat diubah melalui environment variable tanpa mengubah schema API.
+Nilai batas dapat diubah melalui environment variable tanpa mengubah schema API. Sebelum tombol Start Sign diaktifkan, web client memanggil `GET /health/ready` pada origin loopback.
 
 ## 6. Alur Prediksi
 
@@ -198,6 +204,8 @@ Aturan:
 - `candidates` diurutkan dari confidence tertinggi;
 - panjang `candidates` tidak melebihi `topK`;
 - `latencyMs` mengukur proses di Sign Language Service, tidak termasuk jaringan dan Application Server.
+
+Web client meneruskan isi prediction yang relevan ke Application Server sebagai JSON dan mengganti nama `requestId` lokal menjadi `localRequestId`. Application Server memberikan `X-Request-ID` publiknya sendiri. Sign Language Service tidak memanggil Application Server.
 
 ## 9. Fungsi Inti
 
@@ -348,6 +356,8 @@ Contoh:
 SIGN_HOST=127.0.0.1
 SIGN_PORT=8765
 INTERNAL_API_KEY=
+SIGN_ALLOWED_ORIGINS=http://localhost:5173,http://APP_SERVER_HOST:8000
+SIGN_ALLOW_PRIVATE_NETWORK=true
 
 SIGN_MODEL_PATH=./models/signbart-mvp-v1
 SIGN_MODEL_VERSION=signbart-mvp-v1
@@ -369,6 +379,8 @@ SIGN_STORE_DEBUG_MEDIA=false
 ```
 
 Threshold kosong harus membuat readiness gagal. Nilainya wajib berasal dari evaluasi checkpoint, bukan tebakan di route handler.
+
+`SIGN_ALLOW_PRIVATE_NETWORK` hanya diaktifkan untuk origin demo yang telah diuji. Jika web app disajikan melalui HTTPS dan browser menolak akses ke service HTTP loopback, gunakan companion service dengan HTTPS lokal atau ekstensi browser; solusi tersebut berada di luar kontrak MVP. Untuk demo, gunakan origin HTTP pada jaringan tepercaya atau kombinasi origin/browser yang telah lolos smoke test.
 
 ## 14. Vocabulary Contract
 
@@ -465,6 +477,7 @@ Jangan log:
 - confidence selalu `0–1`;
 - kandidat terurut menurun;
 - error menggunakan envelope yang sama.
+- preflight CORS hanya menerima origin yang ada dalam allowlist.
 
 ### 17.3 Smoke
 
@@ -473,7 +486,8 @@ Jangan log:
 - klip kosong ditolak;
 - no-sign menghasilkan `NO_SIGN` atau `UNKNOWN`, bukan token;
 - sepuluh request berurutan tidak meningkatkan penggunaan VRAM secara terus-menerus;
-- Application Server dapat memanggil service menggunakan kontrak final.
+- web client dapat memanggil service melalui `127.0.0.1:8765` dan melaporkan response ke Application Server.
+- laptop kedua yang tidak menjalankan Sign Language Service tetap dapat menggunakan Application Server.
 
 ### 17.4 Evaluasi model
 
@@ -493,6 +507,7 @@ Frame dari video yang sama tidak boleh tersebar ke train dan test split.
 ## 18. Acceptance Criteria
 
 - Service berjalan pada laptop RTX 3060 dengan satu perintah yang didokumentasikan.
+- Service hanya terekspos melalui loopback pada mode demo.
 - Model dimuat dan di-warm-up saat startup.
 - `POST /v1/sign/predict` menerima satu klip dan mengembalikan schema final.
 - Satu request tidak membuat session atau transcript.
@@ -501,6 +516,7 @@ Frame dari video yang sama tidak boleh tersebar ke train dan test split.
 - Video tidak disimpan secara default.
 - Response p95 setelah upload selesai ditargetkan kurang dari satu detik dan diukur pada perangkat demo.
 - Semua contract, unit, dan smoke test lulus.
+- Smoke test end-to-end membuktikan bahwa video tidak mencapai Application Server.
 - Known limitations ditulis di README tanpa klaim continuous sign translation.
 
 ## 19. Urutan Implementasi
@@ -512,7 +528,6 @@ Frame dari video yang sama tidak boleh tersebar ke train dan test split.
 5. Hubungkan inferensi GPU dan warm-up.
 6. Kalibrasi confidence policy dari validation set.
 7. Tambahkan error handling, metrics, dan privacy guard.
-8. Jalankan contract test dengan mock Application Server.
+8. Jalankan contract test dengan mock web client dan mock Application Server penerima prediction report.
 9. Benchmark latency dan VRAM pada laptop demo.
 10. Bekukan checkpoint, threshold, dan vocabulary untuk demo.
-

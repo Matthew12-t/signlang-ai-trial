@@ -1,18 +1,18 @@
 openapi: 3.1.0
 info:
   title: Isyara Sign Language Service API
-  version: 1.0.0
+  version: 1.1.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   description: |
-    Internal REST contract for word-level isolated sign prediction. This service
-    is stateless and may only be called by the Isyara Application Server.
+    Edge-local REST contract for word-level isolated sign prediction. This
+    stateless service runs on the signer's laptop and is called by the Isyara web
+    client over loopback. The Application Server never receives sign video.
 servers:
-  - url: /
-    description: Current Sign Language Service origin
-security:
-  - InternalApiKey: []
+  - url: http://127.0.0.1:8765
+    description: Default loopback origin on the signer's laptop
+security: []
 tags:
   - name: Health
     description: Process and model readiness.
@@ -52,6 +52,14 @@ paths:
       tags: [Sign]
       operationId: predictIsolatedSign
       summary: Predict one isolated sign from one short video clip.
+      description: |
+        Called directly by the web client on the same laptop. The web client
+        reports the structured result, not the video, to the Application Server.
+        Browser-local demo mode does not require an API key. A private
+        service-to-service deployment may require X-Internal-API-Key.
+      security:
+        - {}
+        - InternalApiKey: []
       parameters:
         - $ref: "#/components/parameters/RequestId"
       requestBody:
@@ -137,7 +145,7 @@ components:
       name: X-Request-ID
       in: header
       required: true
-      description: Application Server generated UUID used for correlation.
+      description: Web-client-generated UUID used for local correlation.
       schema:
         type: string
         format: uuid
@@ -250,7 +258,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorBody"
     Unauthorized:
-      description: Internal API key is missing or invalid.
+      description: API key is required by this deployment and is missing or invalid.
       content:
         application/json:
           schema:

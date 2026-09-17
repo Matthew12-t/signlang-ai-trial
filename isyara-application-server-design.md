@@ -1,6 +1,6 @@
 # Isyara Application Server — Design and API Contract
 
-Status: Draft v0.1  
+Status: Draft v0.2  
 Target: MVP Hackathon IFEST 2026  
 Implementasi acuan: Python REST API  
 Audience: tim software engineering dan tim AI
@@ -19,13 +19,13 @@ Perubahan schema lintas-repo harus memperbarui kedua OpenAPI dalam pull request 
 
 ## 2. Tanggung Jawab
 
-Application Server adalah orchestration layer antara frontend, penyimpanan session, dan seluruh AI services.
+Application Server adalah orchestration layer antara web client, penyimpanan session, dan AI services yang berjalan di sisi server. Sign Language Service merupakan pengecualian: layanan tersebut berjalan di laptop penanda dan dipanggil langsung oleh web client pada laptop yang sama.
 
 Application Server bertanggung jawab atas:
 
 - lifecycle session;
 - lifecycle sign utterance;
-- menerima klip sign dan meneruskannya ke Sign Service;
+- menerima dan memvalidasi laporan prediction dari Sign Language Service lokal;
 - menyimpan prediction sementara dan token yang dikonfirmasi;
 - meneruskan audio chunk ke STT Service;
 - menyimpan hanya transcript STT final;
@@ -39,6 +39,8 @@ Application Server bertanggung jawab atas:
 Application Server tidak bertanggung jawab atas:
 
 - inferensi SignBart;
+- menerima atau meneruskan video sign;
+- memverifikasi secara kriptografis bahwa laporan prediction benar-benar berasal dari model lokal pada MVP;
 - inferensi STT/TTS;
 - prompt dan inferensi Qwen;
 - threshold confidence model;
@@ -49,16 +51,31 @@ Application Server tidak bertanggung jawab atas:
 
 ```mermaid
 flowchart LR
-    WEB[Web Client] -->|REST /v1| APP[Python Application Server]
+    CAMERA[Kamera laptop penanda] --> WEB[Web Client penanda]
+    WEB -->|video lokal, REST loopback| SIGN[Sign Service lokal\nSignBart + RTX 3060]
+    SIGN -->|prediction| WEB
+    WEB -->|prediction report, confirm, finalize| APP[Python Application Server]
+    VIEWER[Web Client laptop lain] -->|REST /v1| APP
     APP --> DB[(Session and Transcript Store)]
-    APP -->|REST internal| SIGN[Sign Service]
     APP -->|REST internal| STT[STT Service]
     APP -->|REST internal| GLOSS[Gloss Service]
     APP -->|REST internal| TTS[TTS Service]
     APP -->|REST internal| RECALL[Recall Service]
 ```
 
-Frontend hanya mengenal base URL Application Server. URL service internal, API key internal, model ID, token provider, dan prompt tidak boleh dikirim ke browser.
+Topologi demo minimum:
+
+| Node | Proses wajib | Koneksi |
+|---|---|---|
+| Laptop A — penanda | browser + Sign Language Service + GPU | loopback ke Sign Service; jaringan ke Application Server |
+| Laptop B — peserta | browser | jaringan ke Application Server; tidak mengakses Sign Language Service Laptop A |
+| Host bersama | Application Server + database; AI services dapat berada di host server AI lain | dapat dijangkau kedua browser |
+
+Application Server tidak ditempatkan pada laptop penanda sebagai dependency arsitektural. Kedua laptop menggunakan `APP_PUBLIC_BASE_URL` yang sama agar session, token terkonfirmasi, transcript final, dan hasil Recall memiliki sumber kebenaran bersama.
+
+Web client mengenal dua origin: base URL Application Server bersama dan `http://127.0.0.1:8765` untuk Sign Language Service lokal. Hanya web client pada laptop penanda yang memanggil origin lokal tersebut. URL STT, TTS, Gloss, Recall, API key internal, token provider, dan prompt tidak boleh dikirim ke browser.
+
+Video sign tidak pernah dikirim ke Application Server. Batas kepercayaan MVP berakhir pada web client: Application Server dapat memvalidasi bentuk dan konsistensi laporan prediction, tetapi belum dapat membuktikan bahwa prediction benar-benar dihasilkan oleh model lokal. Bukti prediction bertanda tangan atau registrasi perangkat berada di luar ruang lingkup demo.
 
 Kontrak MVP tidak mewajibkan autentikasi pengguna karena targetnya demo lokal. CORS tetap dibatasi ke origin frontend. Autentikasi publik dapat ditambahkan kemudian tanpa mengubah kontrak internal antarlayanan.
 
@@ -79,7 +96,7 @@ Session menyimpan:
 - kumpulan transcript entry;
 - utterance yang masih aktif atau selesai.
 
-Hanya session `ACTIVE` yang dapat menerima audio, sign prediction, token baru, atau pertanyaan Recall.
+Hanya session `ACTIVE` yang dapat menerima audio, laporan sign prediction, token baru, atau pertanyaan Recall.
 
 ### 4.2 Sign utterance
 
@@ -99,7 +116,7 @@ Aturan:
 
 ### 4.3 Prediction
 
-Prediction disimpan sementara agar konfirmasi pengguna dapat diverifikasi.
+Prediction yang dilaporkan web client disimpan sementara agar konfirmasi pengguna dapat diverifikasi.
 
 ```text
 PENDING_CONFIRMATION → ACCEPTED
@@ -144,20 +161,38 @@ Hanya entry `isFinal=true` yang boleh dikirim ke Recall Service.
 | Method dan path | Fungsi |
 |---|---|
 | `POST /v1/sessions/{sessionId}/utterances` | Start Sign |
-| `POST /v1/utterances/{utteranceId}/predictions` | unggah satu klip isolated sign |
+| `GET /v1/sessions/{sessionId}/utterances/active` | membaca utterance aktif dan token terkonfirmasi untuk sinkronisasi antarlaptop |
+| `POST /v1/utterances/{utteranceId}/predictions` | mendaftarkan hasil prediction dari Sign Language Service lokal |
 | `POST /v1/utterances/{utteranceId}/tokens` | konfirmasi satu candidate sebagai kata |
 | `POST /v1/utterances/{utteranceId}:finalize` | Stop Sign dan buat transcript entry |
 | `DELETE /v1/utterances/{utteranceId}` | batalkan utterance aktif |
 
-Prediction endpoint menerima `multipart/form-data`:
+Prediction endpoint menerima `application/json`. Payload berasal dari response `POST http://127.0.0.1:8765/v1/sign/predict` yang telah dipetakan oleh web client:
 
-```text
-video: binary
-topK: 3
-vocabularyVersion: mvp-en-v1
+```json
+{
+  "localRequestId": "c946f42d-474e-40f4-a6d9-b0eb75f05a9a",
+  "predictionId": "pred_01J8Y7RK2F",
+  "prediction": "REPEAT",
+  "confidence": 0.86,
+  "candidates": [
+    {"label": "REPEAT", "confidence": 0.86},
+    {"label": "AGAIN", "confidence": 0.09}
+  ],
+  "status": "CONFIDENT",
+  "requiresConfirmation": false,
+  "modelVersion": "signbart-mvp-v1",
+  "vocabularyVersion": "mvp-en-v1",
+  "latencyMs": 184,
+  "capturedAt": "2026-09-18T10:15:22Z"
+}
 ```
 
-Application Server menambahkan `X-Request-ID`, lalu meneruskan payload ke `POST /v1/sign/predict` milik Sign Service. File tidak disimpan setelah request selesai.
+Application Server tidak memanggil Sign Language Service. Server memvalidasi bahwa utterance masih `CAPTURING`, `predictionId` belum pernah dipakai, `vocabularyVersion` sesuai dengan utterance, kandidat unik dan terurut, confidence berada pada rentang `0–1`, serta status konsisten dengan `prediction` dan `requiresConfirmation`. Server lalu menyimpan prediction dengan waktu penerimaan server. `localRequestId` hanya digunakan untuk korelasi; `X-Request-ID` pada request Application Server tetap merupakan ID request publik yang berbeda.
+
+Hanya prediction berstatus `CONFIDENT` atau `AMBIGUOUS` yang dapat dikonfirmasi. `selectedLabel` harus ada di `candidates`. Status `UNKNOWN`, `NO_SIGN`, dan `INVALID_INPUT` tidak boleh menghasilkan token.
+
+Untuk demo dua laptop, web client lain melakukan polling `GET /v1/sessions/{sessionId}/utterances/active` setiap 300–500 ms selama mode sign aktif. Endpoint tersebut hanya menampilkan token terkonfirmasi; prediction mentah tidak disebarkan ke peserta lain. WebSocket dapat ditambahkan kemudian tanpa mengubah state machine.
 
 Konfirmasi token:
 
@@ -254,7 +289,7 @@ Jika context kosong, Application Server langsung mengembalikan `grounded=false` 
 
 | Public operation | Internal call | Data yang disimpan |
 |---|---|---|
-| unggah klip sign | `POST /v1/sign/predict` | prediction sementara; bukan transcript |
+| laporkan prediction lokal | tidak ada | prediction sementara; bukan transcript |
 | konfirmasi kata | tidak ada | confirmed token |
 | finalisasi utterance | `POST /v1/gloss/normalize` | satu transcript entry `source=sign` |
 | kirim audio chunk | `POST /v1/stt/transcriptions` | hanya final transcript entry |
@@ -273,10 +308,9 @@ async def create_sign_utterance(
     command: CreateUtterance,
 ) -> SignUtterance: ...
 
-async def request_sign_prediction(
+async def register_sign_prediction(
     utterance_id: str,
-    video: UploadFile,
-    options: SignPredictionOptions,
+    report: SignPredictionReport,
 ) -> SignPrediction: ...
 
 async def confirm_sign_token(
@@ -307,9 +341,6 @@ async def answer_session_recall(
 Internal clients:
 
 ```python
-class SignServiceClient(Protocol):
-    async def predict(self, video: UploadFile, options: SignOptions) -> SignPrediction: ...
-
 class STTServiceClient(Protocol):
     async def transcribe(self, audio: UploadFile, options: STTOptions) -> Transcript: ...
 
@@ -336,11 +367,11 @@ Tabel/collection minimum:
 - `transcript_entries`;
 - `idempotency_records`.
 
-Audio dan video hanya hidup selama request berlangsung. Jika debugging media diaktifkan, gunakan direktori sementara, TTL singkat, dan feature flag yang default-nya `false`.
+Audio STT hanya hidup selama request berlangsung. Application Server tidak menerima video sign. Jika debugging audio diaktifkan, gunakan direktori sementara, TTL singkat, dan feature flag yang nilai default-nya `false`.
 
 ## 9. Transaksi dan Idempotency
 
-- `POST /sessions`, prediction, token confirmation, finalization, TTS, dan Recall menerima `Idempotency-Key`.
+- `POST /sessions`, registrasi prediction, token confirmation, finalization, TTS, dan Recall menerima `Idempotency-Key`.
 - Request dengan key dan payload yang sama mengembalikan hasil sebelumnya.
 - Key yang sama dengan payload berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
 - Finalisasi utterance dan pembuatan transcript entry berlangsung dalam satu transaksi.
@@ -351,23 +382,22 @@ Audio dan video hanya hidup selama request berlangsung. Jika debugging media dia
 
 | Internal call | Timeout total | Retry |
 |---|---:|---:|
-| Sign prediction | 3 detik | 0 |
 | STT partial | 6 detik | 0 |
 | STT final | 10 detik | 1 |
 | Gloss template | 1 detik | 0 |
 | TTS | 12 detik | 1 |
 | Recall | 15 detik | 1 |
 
-Retry hanya untuk timeout, `429`, dan `5xx` yang dinyatakan retryable. Jangan retry validation error atau prediction sign karena retry inferensi klip yang sama tidak memberikan informasi baru.
+Retry hanya untuk timeout, `429`, dan `5xx` yang dinyatakan retryable. Jangan retry validation error. Retry registrasi prediction dengan `Idempotency-Key` yang sama harus mengembalikan hasil sebelumnya tanpa membuat prediction ganda.
 
 ## 11. Error Publik
 
 ```json
 {
   "error": {
-    "code": "SIGN_SERVICE_UNAVAILABLE",
-    "message": "Sign recognition is temporarily unavailable.",
-    "retryable": true,
+    "code": "PREDICTION_REPORT_INVALID",
+    "message": "The reported sign prediction is inconsistent.",
+    "retryable": false,
     "requestId": "c946f42d-474e-40f4-a6d9-b0eb75f05a9a",
     "details": {}
   }
@@ -378,11 +408,12 @@ Application Server tidak membocorkan nama provider, stack trace, URL internal, a
 
 | Internal condition | Public code |
 |---|---|
-| Sign Service timeout/503 | `SIGN_SERVICE_UNAVAILABLE` |
 | STT timeout/503 | `STT_SERVICE_UNAVAILABLE` |
 | TTS timeout/503 | `TTS_SERVICE_UNAVAILABLE` |
 | Recall timeout/503 | `RECALL_SERVICE_UNAVAILABLE` |
 | prediction ID tidak dikenal/kedaluwarsa | `PREDICTION_NOT_AVAILABLE` |
+| laporan prediction tidak konsisten | `PREDICTION_REPORT_INVALID` |
+| versi vocabulary berbeda dari utterance | `VOCABULARY_VERSION_MISMATCH` |
 | utterance sudah final | `UTTERANCE_ALREADY_FINALIZED` |
 | session sudah berakhir | `SESSION_ENDED` |
 
@@ -393,11 +424,13 @@ APP_HOST=0.0.0.0
 APP_PORT=8000
 DATABASE_URL=sqlite:///./isyara.db
 CORS_ALLOWED_ORIGINS=http://localhost:5173
-MAX_SIGN_CLIP_BYTES=10000000
+APP_PUBLIC_BASE_URL=http://APP_SERVER_HOST:8000
 MAX_AUDIO_CHUNK_BYTES=10000000
 RECALL_MAX_CONTEXT_CHARS=24000
+SIGN_PREDICTION_MAX_CANDIDATES=5
+SIGN_PREDICTION_TTL_SECONDS=120
+SIGN_ALLOWED_VOCABULARY_VERSIONS=mvp-en-v1
 
-SIGN_SERVICE_URL=http://127.0.0.1:8765
 STT_SERVICE_URL=http://127.0.0.1:8001
 GLOSS_SERVICE_URL=http://127.0.0.1:8002
 TTS_SERVICE_URL=http://127.0.0.1:8003
@@ -422,7 +455,6 @@ Readiness Application Server menampilkan status dependency tanpa credential:
   "service": "application-api",
   "dependencies": {
     "database": "ready",
-    "sign": "ready",
     "stt": "unavailable",
     "tts": "ready",
     "gloss": "ready",
@@ -435,7 +467,7 @@ Readiness Application Server menampilkan status dependency tanpa credential:
 
 ## 14. Observability
 
-Setiap request publik memperoleh `X-Request-ID`; ID yang sama diteruskan ke service internal. Catat:
+Setiap request publik memperoleh `X-Request-ID`; ID yang sama diteruskan ke service internal yang dipanggil Application Server. Catat:
 
 - route dan status;
 - latency total;
@@ -444,14 +476,18 @@ Setiap request publik memperoleh `X-Request-ID`; ID yang sama diteruskan ke serv
 - session ID dan utterance ID yang telah di-hash atau diperlakukan sebagai identifier teknis;
 - error code terstandardisasi.
 
+Untuk laporan sign, catat `localRequestId`, `predictionId`, versi model/vocabulary, status, latency inferensi yang dilaporkan, dan latency registrasi. Nilai dari perangkat klien harus diberi label sebagai data yang dilaporkan klien, bukan metrik server tepercaya.
+
 Jangan catat media mentah, secret, atau transcript lengkap secara default.
 
 ## 15. Acceptance Criteria
 
-- Frontend hanya memanggil Application Server.
+- Web client memanggil Application Server untuk state bersama dan Sign Language Service melalui loopback hanya pada laptop penanda.
 - Application Server dapat dijalankan dengan mock AI clients berdasarkan kedua OpenAPI.
-- Satu klip sign menghasilkan satu prediction dan tidak langsung menjadi transcript.
+- Video sign tidak mencapai Application Server.
+- Satu klip sign menghasilkan satu prediction lokal; laporan prediction tidak langsung menjadi transcript.
 - Hanya candidate yang dikonfirmasi yang menjadi token.
+- Laptop kedua dapat membaca token terkonfirmasi dari utterance aktif melalui REST.
 - Finalisasi sign menghasilkan tepat satu transcript entry.
 - Partial STT tidak disimpan.
 - Recall hanya menerima transcript final yang dipilih Application Server.
@@ -461,11 +497,14 @@ Jangan catat media mentah, secret, atau transcript lengkap secara default.
 
 ## 16. Pengujian Kontrak Minimum
 
-1. Buat session → buat utterance → predict → confirm → finalize → transcript berisi satu entry sign.
-2. Prediction ambigu tidak masuk transcript sebelum konfirmasi.
-3. Prediction yang ditolak tidak dapat dikonfirmasi kembali.
-4. Partial STT tidak menambah transcript; commit menambah tepat satu entry.
-5. TTS gagal, tetapi utterance final dan transcript tetap ada.
-6. Recall tidak menemukan jawaban dan mengembalikan `grounded=false`.
-7. Retry dengan `Idempotency-Key` yang sama tidak membuat data ganda.
-8. Sign Service mati dan hanya fitur sign yang menampilkan error terisolasi.
+1. Buat session → buat utterance → laporkan prediction lokal → konfirmasi → finalisasi → transcript berisi satu entry sign.
+2. Pastikan request registrasi prediction hanya berisi JSON dan tidak menerima video/multipart.
+3. Prediction ambigu tidak masuk transcript sebelum konfirmasi.
+4. Prediction yang ditolak tidak dapat dikonfirmasi kembali.
+5. `UNKNOWN`, `NO_SIGN`, dan `INVALID_INPUT` tidak dapat dikonfirmasi sebagai token.
+6. Laptop kedua membaca token terbaru melalui endpoint utterance aktif.
+7. Partial STT tidak menambah transcript; commit menambah tepat satu entry.
+8. TTS gagal, tetapi utterance final dan transcript tetap ada.
+9. Recall tidak menemukan jawaban dan mengembalikan `grounded=false`.
+10. Retry dengan `Idempotency-Key` yang sama tidak membuat data ganda.
+11. Sign Language Service lokal mati dan web client penanda menampilkan error tanpa mengubah health Application Server.

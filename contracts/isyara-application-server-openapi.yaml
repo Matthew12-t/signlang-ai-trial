@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Isyara Application API
-  version: 0.1.0
+  version: 0.2.0
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   description: |
     Public REST contract used by the Isyara web client. The Application API owns
-    sessions, confirmation state, transcript persistence, and AI-service orchestration.
+    sessions, confirmation state, transcript persistence, and server-side AI-service
+    orchestration. Sign inference runs on the signer's laptop; this API receives only
+    the reported prediction metadata, never the sign video.
 servers:
   - url: /
     description: Current Application API origin
@@ -18,7 +20,7 @@ tags:
   - name: Sessions
     description: Meeting session lifecycle.
   - name: Sign
-    description: Word-level sign prediction and utterance confirmation.
+    description: Registration of edge-local predictions and utterance confirmation.
   - name: STT
     description: Chunked near-real-time speech transcription.
   - name: TTS
@@ -44,7 +46,7 @@ paths:
     get:
       tags: [Health]
       operationId: getApplicationReadiness
-      summary: Check database and AI-service readiness.
+      summary: Check database and server-side AI-service readiness.
       responses:
         "200":
           description: Application is ready or operating in degraded mode.
@@ -134,11 +136,36 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /v1/sessions/{sessionId}/utterances/active:
+    get:
+      tags: [Sign]
+      operationId: getActiveSignUtterance
+      summary: Get the active sign utterance and its confirmed tokens.
+      description: |
+        Used by other web clients in the same session to poll confirmed word-level
+        tokens during the MVP. Raw predictions are not returned.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Active utterance found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignUtterance"
+        "204":
+          description: The session has no active sign utterance.
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/utterances/{utteranceId}/predictions:
     post:
       tags: [Sign]
-      operationId: createSignPrediction
-      summary: Predict one isolated sign from one uploaded clip.
+      operationId: registerSignPrediction
+      summary: Register one prediction produced by the edge-local Sign Service.
+      description: |
+        The signer web client calls the Sign Service on loopback, then reports its
+        structured response here. This endpoint does not accept or forward video.
       parameters:
         - $ref: "#/components/parameters/UtteranceId"
         - $ref: "#/components/parameters/RequestId"
@@ -146,26 +173,12 @@ paths:
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
-              type: object
-              additionalProperties: false
-              required: [video, topK, vocabularyVersion]
-              properties:
-                video:
-                  type: string
-                  format: binary
-                topK:
-                  type: integer
-                  minimum: 1
-                  maximum: 5
-                  default: 3
-                vocabularyVersion:
-                  type: string
-                  default: mvp-en-v1
+              $ref: "#/components/schemas/SignPredictionReportRequest"
       responses:
         "200":
-          description: Sign prediction completed.
+          description: Prediction report validated and registered.
           content:
             application/json:
               schema:
@@ -176,14 +189,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
-        "413":
-          $ref: "#/components/responses/PayloadTooLarge"
-        "415":
-          $ref: "#/components/responses/UnsupportedMediaType"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
-        "504":
-          $ref: "#/components/responses/GatewayTimeout"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
   /v1/utterances/{utteranceId}/tokens:
     post:
       tags: [Sign]
@@ -541,11 +548,73 @@ components:
           format: float
           minimum: 0
           maximum: 1
+    SignPredictionReportRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Untrusted client report of one edge-local inference result. The server
+        validates status/prediction consistency, candidate ordering and unique
+        labels, vocabulary compatibility, utterance state, and predictionId
+        uniqueness before storing it. Only CONFIDENT and AMBIGUOUS reports can
+        later be confirmed as tokens.
+      required:
+        - localRequestId
+        - predictionId
+        - prediction
+        - confidence
+        - candidates
+        - status
+        - requiresConfirmation
+        - modelVersion
+        - vocabularyVersion
+        - latencyMs
+        - capturedAt
+      properties:
+        localRequestId:
+          type: string
+          format: uuid
+          description: Request ID returned by the edge-local Sign Service.
+        predictionId:
+          type: string
+          minLength: 1
+        prediction:
+          type: [string, "null"]
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        candidates:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/SignCandidate"
+        status:
+          type: string
+          enum: [CONFIDENT, AMBIGUOUS, UNKNOWN, INVALID_INPUT, NO_SIGN]
+        requiresConfirmation:
+          type: boolean
+        modelVersion:
+          type: string
+          minLength: 1
+        vocabularyVersion:
+          type: string
+          minLength: 1
+        latencyMs:
+          type: integer
+          minimum: 0
+          description: Inference latency reported by the edge-local Sign Service.
+        capturedAt:
+          type: string
+          format: date-time
+          description: Client-reported completion time for the captured sign clip.
     SignPrediction:
       type: object
       additionalProperties: false
       required:
         - requestId
+        - localRequestId
         - predictionId
         - utteranceId
         - prediction
@@ -557,8 +626,13 @@ components:
         - vocabularyVersion
         - inferenceLatencyMs
         - totalLatencyMs
+        - capturedAt
+        - receivedAt
       properties:
         requestId:
+          type: string
+          format: uuid
+        localRequestId:
           type: string
           format: uuid
         predictionId:
@@ -592,6 +666,13 @@ components:
         totalLatencyMs:
           type: integer
           minimum: 0
+          description: Time spent validating and registering the report in this API.
+        capturedAt:
+          type: string
+          format: date-time
+        receivedAt:
+          type: string
+          format: date-time
     ConfirmSignTokenRequest:
       type: object
       additionalProperties: false
