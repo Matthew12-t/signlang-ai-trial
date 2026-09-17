@@ -1,2 +1,1 @@
-"""Isyara AI Services package."""
-
+"""Isyara AI services source package."""

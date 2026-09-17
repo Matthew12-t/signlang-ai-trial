@@ -5,6 +5,14 @@ Target: MVP Hackathon IFEST 2026
 Audience: tim software engineering dan tim AI  
 Bahasa demo awal: Inggris
 
+Dokumen terkait:
+
+- `isyara-ai-services-openapi.yaml`: kontrak HTTP internal seluruh AI service;
+- `isyara-application-server-design.md`: orchestration, state, dan persistence Application Server;
+- `isyara-application-server-openapi.yaml`: kontrak REST publik untuk frontend.
+
+Dokumen ini tetap menjadi sumber kebenaran batas AI service. OpenAPI menjadi sumber kebenaran bentuk request/response yang dapat dibaca mesin.
+
 ## 1. Tujuan
 
 Dokumen ini menetapkan batas tanggung jawab, kontrak data, fungsi inti, API, alur real-time, kebijakan timeout, dan perilaku kegagalan untuk layanan AI Isyara.
@@ -73,14 +81,14 @@ AI services tidak menyimpan riwayat meeting. Recall Service menerima konteks eks
 
 ```text
 Frontend          Application API        STT Service          HF ASR
-   | start STT           |                    |                  |
-   |-------------------->| open stream        |                  |
-   | audio frames        |------------------->| rolling buffer   |
+   | audio chunk         |                    |                  |
+   |-------------------->| POST chunk         |                  |
+   |                     |------------------->| rolling decode   |
    |                     |                    |----------------->|
    |                     | provisional text  |<-----------------|
    | partial caption     |<-------------------|                  |
    |<--------------------|                    |                  |
-   | stop/commit         |------------------->| final decode     |
+   | final chunk/commit  |------------------->| final decode     |
    |                     | final transcript  |<-----------------|
    |                     |<-------------------|                  |
    |                     | persist final      |                  |
@@ -232,7 +240,7 @@ Response `200`:
 }
 ```
 
-Endpoint batch ini juga menjadi primitive yang dipakai orkestrasi rolling chunk REST oleh Application API.
+Endpoint batch ini juga menjadi primitive yang dipakai Application API untuk rolling audio chunk berbasis REST.
 
 ### 4.4 TTS — `POST /v1/tts/synthesize`
 
@@ -706,7 +714,7 @@ ai-services/
 │  ├─ stt/
 │  │  ├─ api.py
 │  │  ├─ service.py
-│  │  └─ stream.py
+│  │  └─ chunking.py
 │  ├─ tts/
 │  │  ├─ api.py
 │  │  ├─ audio.py

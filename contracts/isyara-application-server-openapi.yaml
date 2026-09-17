@@ -1,0 +1,861 @@
+openapi: 3.1.0
+info:
+  title: Isyara Application API
+  version: 0.1.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Public REST contract used by the Isyara web client. The Application API owns
+    sessions, confirmation state, transcript persistence, and AI-service orchestration.
+servers:
+  - url: /
+    description: Current Application API origin
+security: []
+tags:
+  - name: Health
+    description: Application and dependency health.
+  - name: Sessions
+    description: Meeting session lifecycle.
+  - name: Sign
+    description: Word-level sign prediction and utterance confirmation.
+  - name: STT
+    description: Chunked near-real-time speech transcription.
+  - name: TTS
+    description: Speech synthesis for finalized utterances.
+  - name: Transcript
+    description: Final session transcript.
+  - name: Recall
+    description: Transcript-grounded context recovery.
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getApplicationLiveness
+      summary: Check process liveness.
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getApplicationReadiness
+      summary: Check database and AI-service readiness.
+      responses:
+        "200":
+          description: Application is ready or operating in degraded mode.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/sessions:
+    post:
+      tags: [Sessions]
+      operationId: createSession
+      summary: Create an active communication session.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+      responses:
+        "201":
+          description: Session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      tags: [Sessions]
+      operationId: getSession
+      summary: Get session status.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Session found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Sessions]
+      operationId: deleteSession
+      summary: End the session and remove session-scoped data.
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "204":
+          description: Session ended and removed.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/sessions/{sessionId}/utterances:
+    post:
+      tags: [Sign]
+      operationId: createSignUtterance
+      summary: Start a sign utterance capture range.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUtteranceRequest"
+      responses:
+        "201":
+          description: Utterance created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignUtterance"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/utterances/{utteranceId}/predictions:
+    post:
+      tags: [Sign]
+      operationId: createSignPrediction
+      summary: Predict one isolated sign from one uploaded clip.
+      parameters:
+        - $ref: "#/components/parameters/UtteranceId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [video, topK, vocabularyVersion]
+              properties:
+                video:
+                  type: string
+                  format: binary
+                topK:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  default: 3
+                vocabularyVersion:
+                  type: string
+                  default: mvp-en-v1
+      responses:
+        "200":
+          description: Sign prediction completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignPrediction"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /v1/utterances/{utteranceId}/tokens:
+    post:
+      tags: [Sign]
+      operationId: confirmSignToken
+      summary: Confirm one candidate from a pending prediction.
+      parameters:
+        - $ref: "#/components/parameters/UtteranceId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmSignTokenRequest"
+      responses:
+        "201":
+          description: Token confirmed and appended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfirmSignTokenResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /v1/utterances/{utteranceId}:finalize:
+    post:
+      tags: [Sign]
+      operationId: finalizeSignUtterance
+      summary: Finalize confirmed tokens into one transcript entry.
+      parameters:
+        - $ref: "#/components/parameters/UtteranceId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Utterance finalized.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinalizeUtteranceResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /v1/utterances/{utteranceId}:
+    delete:
+      tags: [Sign]
+      operationId: cancelSignUtterance
+      summary: Cancel an active utterance.
+      parameters:
+        - $ref: "#/components/parameters/UtteranceId"
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "204":
+          description: Utterance cancelled.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/utterances/{utteranceId}:speak:
+    post:
+      tags: [TTS]
+      operationId: speakFinalizedUtterance
+      summary: Synthesize a finalized sign utterance.
+      parameters:
+        - $ref: "#/components/parameters/UtteranceId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Synthesized audio.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            X-Total-Latency-Ms:
+              schema:
+                type: integer
+                minimum: 0
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /v1/sessions/{sessionId}/stt/chunks:
+    post:
+      tags: [STT]
+      operationId: transcribeSpeechChunk
+      summary: Process one ordered audio chunk as provisional or final speech.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [audio, streamId, sequence, commit, language, encoding, startedAt]
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                streamId:
+                  type: string
+                sequence:
+                  type: integer
+                  minimum: 0
+                commit:
+                  type: boolean
+                language:
+                  type: string
+                  default: en
+                encoding:
+                  type: string
+                  enum: [wav, webm, flac, pcm_s16le]
+                startedAt:
+                  type: string
+                  format: date-time
+      responses:
+        "200":
+          description: Chunk transcribed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/STTChunkResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+  /v1/sessions/{sessionId}/transcript:
+    get:
+      tags: [Transcript]
+      operationId: getSessionTranscript
+      summary: Get ordered final transcript entries.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/RequestId"
+        - name: afterSequence
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Transcript returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranscriptResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/sessions/{sessionId}/recall:
+    post:
+      tags: [Recall]
+      operationId: answerSessionRecall
+      summary: Answer a question from final session transcript entries.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicRecallRequest"
+      responses:
+        "200":
+          description: Recall processed; grounded may be false.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicRecallResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "504":
+          $ref: "#/components/responses/GatewayTimeout"
+components:
+  parameters:
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    UtteranceId:
+      name: utteranceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  headers:
+    RequestId:
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, service]
+      properties:
+        status:
+          type: string
+          enum: [alive, ready, degraded, not_ready]
+        service:
+          type: string
+        dependencies:
+          type: object
+          additionalProperties:
+            type: string
+    CreateSessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          default: en
+    Session:
+      type: object
+      additionalProperties: false
+      required: [id, status, language, createdAt, endedAt]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ENDED]
+        language:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: [string, "null"]
+          format: date-time
+    CreateUtteranceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          default: en
+        vocabularyVersion:
+          type: string
+          default: mvp-en-v1
+    ConfirmedSignToken:
+      type: object
+      additionalProperties: false
+      required: [id, predictionId, label, position, confirmedAt]
+      properties:
+        id:
+          type: string
+        predictionId:
+          type: string
+        label:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+        confirmedAt:
+          type: string
+          format: date-time
+    SignUtterance:
+      type: object
+      additionalProperties: false
+      required: [id, sessionId, status, language, vocabularyVersion, tokens, createdAt]
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        status:
+          type: string
+          enum: [CAPTURING, FINALIZED, CANCELLED]
+        language:
+          type: string
+        vocabularyVersion:
+          type: string
+        tokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConfirmedSignToken"
+        createdAt:
+          type: string
+          format: date-time
+    SignCandidate:
+      type: object
+      additionalProperties: false
+      required: [label, confidence]
+      properties:
+        label:
+          type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+    SignPrediction:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - predictionId
+        - utteranceId
+        - prediction
+        - confidence
+        - candidates
+        - status
+        - requiresConfirmation
+        - modelVersion
+        - vocabularyVersion
+        - inferenceLatencyMs
+        - totalLatencyMs
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        predictionId:
+          type: string
+        utteranceId:
+          type: string
+        prediction:
+          type: [string, "null"]
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        candidates:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/SignCandidate"
+        status:
+          type: string
+          enum: [CONFIDENT, AMBIGUOUS, UNKNOWN, INVALID_INPUT, NO_SIGN]
+        requiresConfirmation:
+          type: boolean
+        modelVersion:
+          type: string
+        vocabularyVersion:
+          type: string
+        inferenceLatencyMs:
+          type: integer
+          minimum: 0
+        totalLatencyMs:
+          type: integer
+          minimum: 0
+    ConfirmSignTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [predictionId, selectedLabel]
+      properties:
+        predictionId:
+          type: string
+        selectedLabel:
+          type: string
+    ConfirmSignTokenResponse:
+      type: object
+      additionalProperties: false
+      required: [token, utteranceStatus]
+      properties:
+        token:
+          $ref: "#/components/schemas/ConfirmedSignToken"
+        utteranceStatus:
+          type: string
+          const: CAPTURING
+    TranscriptEntry:
+      type: object
+      additionalProperties: false
+      required: [id, sessionId, sequence, source, text, startedAt, endedAt, isFinal]
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        sequence:
+          type: integer
+          minimum: 0
+        source:
+          type: string
+          enum: [speech, sign]
+        speaker:
+          type: [string, "null"]
+        text:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        isFinal:
+          type: boolean
+          const: true
+    FinalizeUtteranceResponse:
+      type: object
+      additionalProperties: false
+      required: [utterance, transcriptEntry]
+      properties:
+        utterance:
+          $ref: "#/components/schemas/SignUtterance"
+        transcriptEntry:
+          $ref: "#/components/schemas/TranscriptEntry"
+    STTChunkResponse:
+      type: object
+      additionalProperties: false
+      required: [requestId, streamId, sequence, revision, text, isFinal, transcriptEntry, totalLatencyMs]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        streamId:
+          type: string
+        sequence:
+          type: integer
+          minimum: 0
+        revision:
+          type: integer
+          minimum: 0
+        text:
+          type: string
+        isFinal:
+          type: boolean
+        transcriptEntry:
+          oneOf:
+            - $ref: "#/components/schemas/TranscriptEntry"
+            - type: "null"
+        totalLatencyMs:
+          type: integer
+          minimum: 0
+    TranscriptResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, entries, lastSequence]
+      properties:
+        sessionId:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptEntry"
+        lastSequence:
+          type: integer
+          minimum: 0
+    RecallRange:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode, lastSeconds]
+          properties:
+            mode:
+              type: string
+              const: recent
+            lastSeconds:
+              type: integer
+              minimum: 30
+              maximum: 3600
+        - type: object
+          additionalProperties: false
+          required: [mode, startedAt, endedAt]
+          properties:
+            mode:
+              type: string
+              const: explicit
+            startedAt:
+              type: string
+              format: date-time
+            endedAt:
+              type: string
+              format: date-time
+    PublicRecallRequest:
+      type: object
+      additionalProperties: false
+      required: [query, language]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        language:
+          type: string
+          default: en
+        range:
+          $ref: "#/components/schemas/RecallRange"
+    Evidence:
+      type: object
+      additionalProperties: false
+      required: [entryId, quote, startedAt]
+      properties:
+        entryId:
+          type: string
+        quote:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+    PublicRecallResponse:
+      type: object
+      additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              grounded:
+                const: true
+          then:
+            properties:
+              evidence:
+                minItems: 1
+              notFoundReason:
+                type: "null"
+        - if:
+            properties:
+              grounded:
+                const: false
+          then:
+            properties:
+              notFoundReason:
+                type: string
+      required: [requestId, answer, grounded, evidence, notFoundReason, totalLatencyMs]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        answer:
+          type: string
+        grounded:
+          type: boolean
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
+        notFoundReason:
+          type: [string, "null"]
+          enum: [NOT_IN_CONTEXT, EMPTY_CONTEXT, EVIDENCE_VALIDATION_FAILED, null]
+        totalLatencyMs:
+          type: integer
+          minimum: 0
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable, requestId, details]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+            requestId:
+              type: string
+              format: uuid
+            details:
+              type: object
+              additionalProperties: true
+  responses:
+    BadRequest:
+      description: Request is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFound:
+      description: Requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Conflict:
+      description: Resource state or idempotency conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Gone:
+      description: Prediction has expired or is no longer confirmable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    PayloadTooLarge:
+      description: Uploaded media exceeds configured limits.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnsupportedMediaType:
+      description: Uploaded media type is unsupported.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    UnprocessableEntity:
+      description: Request is valid but cannot be processed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    ServiceUnavailable:
+      description: Application or required AI service is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    GatewayTimeout:
+      description: An AI service exceeded its deadline.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"

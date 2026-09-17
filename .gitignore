@@ -2,9 +2,13 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-.venv/
+.venv*/
 venv/
 .env
 *.db
-models/
 .cache/
+models/*.pt
+models/*.pth
+models/*.jit
+models/**/*.safetensors
+models/**/config.json
