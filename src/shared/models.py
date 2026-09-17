@@ -127,6 +127,13 @@ class Evidence(APIModel):
     started_at: datetime = Field(alias="startedAt")
 
 
+class RecallAnswer(APIModel):
+    answer: str
+    grounded: bool
+    evidence: list[Evidence]
+    not_found_reason: NotFoundReason | None = Field(alias="notFoundReason")
+
+
 class RecallQueryResponse(APIModel):
     request_id: str = Field(alias="requestId")
     answer: str
