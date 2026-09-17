@@ -63,7 +63,7 @@ def service(provider: FakeProvider) -> RecallService:
         retriever=ProvidedContextRetriever(),
         model="Qwen/Qwen3-8B",
         max_context_chars=24_000,
-        max_answer_tokens=160,
+        max_answer_tokens=512,
         temperature=0.0,
     )
 
@@ -119,6 +119,28 @@ async def test_valid_grounded_answer_returns_locally_derived_evidence_timestamp(
     assert result.evidence[0].started_at == transcript().started_at
     assert provider.calls[0]["temperature"] == 0.0
     assert provider.calls[0]["max_tokens"] == 160
+
+
+@pytest.mark.asyncio
+async def test_default_request_budget_allows_a_complete_recall_json_response() -> None:
+    provider = FakeProvider(
+        {
+            "answer": "The deadline is Friday at 5 PM.",
+            "grounded": True,
+            "evidence": [{"entryId": "tr_17", "quote": "deadline is Friday"}],
+            "notFoundReason": None,
+        }
+    )
+    request = RecallQueryRequest(
+        sessionId="ses_default_budget",
+        query="When is the deadline?",
+        language="en",
+        contextEntries=[transcript()],
+    )
+
+    await service(provider).query(request)
+
+    assert provider.calls[0]["max_tokens"] == 512
 
 
 @pytest.mark.asyncio

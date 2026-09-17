@@ -854,7 +854,7 @@
             "maximum": 512.0,
             "minimum": 32.0,
             "title": "Maxanswertokens",
-            "default": 160
+            "default": 512
           },
           "requireEvidence": {
             "type": "boolean",

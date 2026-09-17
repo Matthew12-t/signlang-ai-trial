@@ -90,7 +90,7 @@ class TranscriptEntry(APIModel):
 
 
 class RecallOptions(APIModel):
-    max_answer_tokens: int = Field(default=160, alias="maxAnswerTokens", ge=32, le=512)
+    max_answer_tokens: int = Field(default=512, alias="maxAnswerTokens", ge=32, le=512)
     require_evidence: bool = Field(default=True, alias="requireEvidence")
 
 
