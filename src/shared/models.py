@@ -195,3 +195,6 @@ class AudioArtifact:
     sample_rate: int
     model_id: str
     latency_ms: int
+
+
+RecallQueryResponse.model_rebuild()

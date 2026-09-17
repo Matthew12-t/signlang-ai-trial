@@ -80,6 +80,10 @@ class Settings:
     gloss_mode: Literal["template", "qwen"] = "template"
     gloss_max_tokens: int = 64
     gloss_llm_max_output_tokens: int = 96
+    recall_model: str = "Qwen/Qwen3-8B"
+    recall_max_context_chars: int = 24_000
+    recall_max_answer_tokens: int = 160
+    recall_temperature: float = 0.0
 
     # Compatibility with the former BaseSettings constructor used by offline tests.
     _env_file: str | None = field(default=None, repr=False, compare=False)
@@ -139,6 +143,10 @@ class Settings:
             gloss_llm_max_output_tokens=_integer(
                 "GLOSS_LLM_MAX_OUTPUT_TOKENS", 96
             ),
+            recall_model=os.getenv("HF_RECALL_MODEL", "Qwen/Qwen3-8B"),
+            recall_max_context_chars=_integer("RECALL_MAX_CONTEXT_CHARS", 24_000),
+            recall_max_answer_tokens=_integer("RECALL_MAX_ANSWER_TOKENS", 160),
+            recall_temperature=_floating_point("RECALL_TEMPERATURE", 0.0),
         )
 
 

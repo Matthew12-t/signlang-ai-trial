@@ -11,6 +11,9 @@ from fastapi import FastAPI, Header, Request
 
 from src.gloss.api import router as gloss_router
 from src.gloss.service import GlossService
+from src.recall.api import router as recall_router
+from src.recall.retrieval import ProvidedContextRetriever
+from src.recall.service import RecallService
 from src.shared.config import Settings, get_settings
 from src.shared.errors import AppError, error_response, register_error_handlers
 from src.shared.observability import configure_logging, install_request_middleware
@@ -80,7 +83,7 @@ def create_app(
 
     application = FastAPI(
         title="Isyara AI Services",
-        version="0.3.0",
+        version="0.4.0",
         lifespan=lifespan,
     )
     application.state.settings = runtime_settings
@@ -92,16 +95,30 @@ def create_app(
         gloss_provider = HuggingFaceChatProvider.from_settings(runtime_settings)
     application.state.gloss_service = GlossService(runtime_settings, gloss_provider)
 
+    recall_provider = None
+    if "recall" in runtime_settings.enabled_services and runtime_settings.hf_token is not None:
+        recall_provider = HuggingFaceChatProvider.from_settings(
+            runtime_settings, model=runtime_settings.recall_model
+        )
+    application.state.recall_service = RecallService(
+        provider=recall_provider,
+        retriever=ProvidedContextRetriever(),
+        model=runtime_settings.recall_model,
+        max_context_chars=runtime_settings.recall_max_context_chars,
+        max_answer_tokens=runtime_settings.recall_max_answer_tokens,
+        temperature=runtime_settings.recall_temperature,
+    )
+
     register_error_handlers(application)
 
     @application.middleware("http")
-    async def authenticate_gloss(request: Request, call_next):
+    async def authenticate_internal_llm_routes(request: Request, call_next):
         configured_key = runtime_settings.internal_api_key
-        is_gloss_normalize = (
-            request.method == "POST"
-            and _canonical_request_path(request) == "/v1/gloss/normalize"
-        )
-        if configured_key is not None and is_gloss_normalize:
+        protected_path = _canonical_request_path(request) in {
+            "/v1/gloss/normalize",
+            "/v1/recall/query",
+        }
+        if configured_key is not None and request.method == "POST" and protected_path:
             expected = configured_key.encode("utf-8")
             provided = request.headers.get("X-Internal-API-Key", "").encode("utf-8")
             if not hmac.compare_digest(expected, provided):
@@ -115,6 +132,7 @@ def create_app(
     application.include_router(stt_router)
     application.include_router(tts_router)
     application.include_router(gloss_router)
+    application.include_router(recall_router)
 
     @application.get("/health/live", tags=["Health"], responses=_health_responses)
     async def live(
@@ -148,6 +166,11 @@ def create_app(
                 and runtime_settings.hf_token is None
                 else "ready"
             )
+        if "recall" in runtime_settings.enabled_services:
+            checks["configuration"] = "ok"
+            checks["recall"] = (
+                "llm_unavailable" if runtime_settings.hf_token is None else "ready"
+            )
         all_ready = all(
             value in {"ready", "ok"} for value in checks.values()
         )
@@ -155,7 +178,7 @@ def create_app(
             "status": "ready" if all_ready else "degraded",
             "service": (
                 "isyara-ai-services"
-                if "gloss" in runtime_settings.enabled_services
+                if {"gloss", "recall"} & set(runtime_settings.enabled_services)
                 else "ai-services"
             ),
             "checks": checks,

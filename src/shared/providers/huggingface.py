@@ -30,7 +30,9 @@ class HuggingFaceChatProvider:
         self._use_structured_output = use_structured_output
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> "HuggingFaceChatProvider":
+    def from_settings(
+        cls, settings: Settings, *, model: str | None = None
+    ) -> "HuggingFaceChatProvider":
         if settings.hf_token is None:
             raise ProviderUnavailable("HF token is not configured")
 
@@ -41,7 +43,7 @@ class HuggingFaceChatProvider:
         )
         return cls(
             client=client,
-            model=settings.llm_model,
+            model=model or settings.llm_model,
             use_structured_output=settings.hf_use_structured_output,
         )
 
