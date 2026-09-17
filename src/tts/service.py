@@ -158,7 +158,7 @@ class TTSService:
                     self._synthesize_chunks(text_chunks),
                     timeout_seconds=timeout_seconds,
                 )
-            except TimeoutError as error:
+            except asyncio.TimeoutError as error:
                 raise ServiceError(
                     code="INFERENCE_TIMEOUT",
                     message="Text-to-Speech inference exceeded its deadline.",

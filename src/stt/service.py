@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Protocol
@@ -97,7 +98,7 @@ class STTService:
                 ),
                 timeout_seconds=timeout_seconds,
             )
-        except TimeoutError as error:
+        except asyncio.TimeoutError as error:
             raise ServiceError(
                 code="INFERENCE_TIMEOUT",
                 message="Speech-to-Text inference exceeded its deadline.",

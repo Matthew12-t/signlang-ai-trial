@@ -81,7 +81,7 @@ class VoxCPMProvider:
                 self._semaphore.acquire(),
                 timeout=self._settings.model_queue_timeout_seconds,
             )
-        except TimeoutError as error:
+        except asyncio.TimeoutError as error:
             raise ServiceError(
                 code="MODEL_BUSY",
                 message="The Text-to-Speech model is processing another request.",
