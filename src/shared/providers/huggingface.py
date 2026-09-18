@@ -45,6 +45,14 @@ def _translate_error(error: BaseException, *, label: str) -> ServiceError:
             message=f"Hugging Face rejected the token for {label}.",
             status_code=503,
         )
+    if status == 402:
+        return ServiceError(
+            code="INFERENCE_QUOTA_EXHAUSTED",
+            message=(
+                f"The Hugging Face inference credits for {label} are used up."
+            ),
+            status_code=503,
+        )
     if status == 404:
         return ServiceError(
             code="MODEL_UNAVAILABLE",

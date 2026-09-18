@@ -583,6 +583,7 @@ Kode utama:
 | 429 | `RATE_LIMITED` | ya | kuota/rate limit service atau provider |
 | 502 | `UPSTREAM_BAD_RESPONSE` | ya | response provider tidak dapat dipakai |
 | 503 | `MODEL_UNAVAILABLE` | ya | model belum siap/tidak tersedia |
+| 503 | `INFERENCE_QUOTA_EXHAUSTED` | tidak | kredit hosted inference habis; hanya berlaku pada mode `hf-api` |
 | 504 | `INFERENCE_TIMEOUT` | ya | inferensi model melewati deadline |
 
 ## 10. Timeout, Retry, dan Latency Budget

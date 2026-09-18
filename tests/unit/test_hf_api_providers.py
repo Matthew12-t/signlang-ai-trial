@@ -229,6 +229,7 @@ async def test_missing_token_reports_model_unavailable() -> None:
     [
         (401, "MODEL_UNAVAILABLE", False),
         (403, "MODEL_UNAVAILABLE", False),
+        (402, "INFERENCE_QUOTA_EXHAUSTED", False),
         (404, "MODEL_UNAVAILABLE", False),
         (429, "MODEL_BUSY", True),
         (500, "UPSTREAM_BAD_RESPONSE", True),
