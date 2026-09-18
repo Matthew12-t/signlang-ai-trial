@@ -30,12 +30,28 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+INFERENCE_PROVIDERS = ("local", "hf-api")
+
+
+def _inference_provider(name: str) -> str:
+    """Read a provider selector, failing at startup on an unknown value."""
+
+    value = os.getenv(name, "local").strip().lower()
+    if value not in INFERENCE_PROVIDERS:
+        raise ValueError(
+            f"{name} must be one of {', '.join(INFERENCE_PROVIDERS)}; got '{value}'"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Runtime settings.
 
-    Model inference is local. ``HF_TOKEN`` is only used by the Hugging Face Hub
-    clients while downloading model artifacts.
+    Speech inference runs locally by default. ``STT_PROVIDER``/``TTS_PROVIDER``
+    can be switched to ``hf-api`` to call Hugging Face hosted inference instead,
+    in which case ``HF_TOKEN`` authenticates those calls as well as Hub
+    downloads. Gloss and Recall always call hosted chat models.
     """
 
     internal_api_key: str | None = None
@@ -60,6 +76,8 @@ class Settings:
     stt_max_audio_bytes: int = 10_000_000
     stt_max_concurrency: int = 1
     stt_timeout_seconds: float = 10.0
+    stt_provider: str = "local"
+    hf_api_stt_model: str = "openai/whisper-large-v3"
 
     tts_model: str = "openbmb/VoxCPM2"
     tts_device: str = "cuda"
@@ -75,6 +93,8 @@ class Settings:
     tts_pause_ms: int = 120
     tts_max_concurrency: int = 1
     tts_timeout_seconds: float = 12.0
+    tts_provider: str = "local"
+    hf_api_tts_model: str = "hexgrad/Kokoro-82M"
 
     llm_backend: Literal["huggingface"] = "huggingface"
     llm_model: str = "Qwen/Qwen3-4B"
@@ -108,6 +128,9 @@ class Settings:
                 "INTERNAL_API_KEY must be set when REQUIRE_INTERNAL_API_KEY=true"
             )
 
+        stt_provider = _inference_provider("STT_PROVIDER")
+        tts_provider = _inference_provider("TTS_PROVIDER")
+
         return cls(
             internal_api_key=internal_api_key,
             require_internal_api_key=require_internal_api_key,
@@ -135,6 +158,10 @@ class Settings:
             stt_max_audio_bytes=_integer("STT_MAX_AUDIO_BYTES", 10_000_000),
             stt_max_concurrency=max(1, _integer("STT_MAX_CONCURRENCY", 1)),
             stt_timeout_seconds=_floating_point("STT_TIMEOUT_SECONDS", 10.0),
+            stt_provider=stt_provider,
+            hf_api_stt_model=os.getenv(
+                "HF_API_STT_MODEL", "openai/whisper-large-v3"
+            ),
             tts_model=os.getenv("HF_TTS_MODEL", "openbmb/VoxCPM2"),
             tts_device=os.getenv("TTS_DEVICE", "cuda"),
             tts_optimize=_boolean("TTS_OPTIMIZE", True),
@@ -149,6 +176,10 @@ class Settings:
             tts_pause_ms=_integer("TTS_PAUSE_MS", 120),
             tts_max_concurrency=max(1, _integer("TTS_MAX_CONCURRENCY", 1)),
             tts_timeout_seconds=_floating_point("TTS_TIMEOUT_SECONDS", 12.0),
+            tts_provider=tts_provider,
+            hf_api_tts_model=os.getenv(
+                "HF_API_TTS_MODEL", "hexgrad/Kokoro-82M"
+            ),
             llm_backend="huggingface",
             llm_model=os.getenv("LLM_MODEL", "Qwen/Qwen3-4B"),
             hf_provider=os.getenv("HF_PROVIDER", "auto"),

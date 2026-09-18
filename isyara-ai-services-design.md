@@ -497,6 +497,15 @@ class ChatProvider(Protocol):
 
 Implementasi STT awal memakai Faster Whisper/CTranslate2 dan implementasi TTS memakai VoxCPM2 secara lokal. Recall tetap dapat memakai Hugging Face. Service layer hanya bergantung pada protocol tersebut agar runtime dapat diganti tanpa mengubah kontrak HTTP.
 
+Runtime dipilih lewat `STT_PROVIDER` dan `TTS_PROVIDER`, keduanya default `local`. Nilai `hf-api` mengarahkan service memanggil Hugging Face Inference Providers melalui HTTP, tanpa memuat bobot model dan tanpa kebutuhan GPU. Kontrak HTTP, kode error, dan bentuk response tidak berubah di antara kedua mode; yang berbeda hanya adapter di balik protocol.
+
+Batasan mode `hf-api` yang sudah diverifikasi terhadap katalog Inference Providers:
+
+- kontrak hosted ASR tidak menyediakan parameter `language`, sehingga pemilihan bahasa STT tidak dapat dipaksakan dan bergantung pada deteksi otomatis Whisper;
+- `return_timestamps` bersifat best effort dan boleh diabaikan provider, sehingga `segments` dapat kosong walaupun `text` terisi;
+- tidak ada model TTS yang dilayani dengan dukungan bahasa Indonesia; yang terdekat adalah Melayu (`ms`) pada `ResembleAI/chatterbox-turbo`. Mode `hf-api` karena itu belum memenuhi target dwibahasa untuk TTS;
+- VoxCPM2 tidak tersedia sebagai hosted inference, sehingga karakter suara pada mode ini berbeda dari implementasi lokal.
+
 ## 8. Prompt Contract Recall
 
 System instruction minimum:
@@ -574,6 +583,7 @@ Kode utama:
 | 429 | `RATE_LIMITED` | ya | kuota/rate limit service atau provider |
 | 502 | `UPSTREAM_BAD_RESPONSE` | ya | response provider tidak dapat dipakai |
 | 503 | `MODEL_UNAVAILABLE` | ya | model belum siap/tidak tersedia |
+| 503 | `INFERENCE_QUOTA_EXHAUSTED` | tidak | kredit hosted inference habis; hanya berlaku pada mode `hf-api` |
 | 504 | `INFERENCE_TIMEOUT` | ya | inferensi model melewati deadline |
 
 ## 10. Timeout, Retry, dan Latency Budget

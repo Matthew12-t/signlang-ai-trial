@@ -53,6 +53,57 @@ loopback, jangan menonaktifkan pemeriksaan API key.
 pertama dapat lebih lambat karena harus mengunduh atau memuat model terlebih
 dahulu.
 
+## Memilih runtime inferensi
+
+`STT_PROVIDER` dan `TTS_PROVIDER` menentukan dari mana inferensi dijalankan.
+Keduanya default ke `local`.
+
+| Nilai | Arti | Dependency |
+|---|---|---|
+| `local` | bobot model diunduh dan dijalankan di mesin ini | `pip install -e ".[stt]"` dan/atau `".[tts]"` |
+| `hf-api` | memanggil Hugging Face hosted inference lewat HTTP | `pip install -e ".[hf-api]"` |
+
+Mode `hf-api` tidak memuat bobot model sama sekali, jadi tidak butuh GPU maupun
+ruang disk untuk model. Sebagai gantinya ia butuh `HF_TOKEN` dengan izin
+*Inference Providers*; tanpa itu service balas `503 MODEL_UNAVAILABLE`.
+
+```bash
+pip install -e ".[hf-api]"
+export HF_TOKEN=hf_xxx
+export STT_PROVIDER=hf-api TTS_PROVIDER=hf-api
+uvicorn src.main:app --port 8001
+```
+
+Hosted inference melayani repositori yang berbeda dari runtime lokal, jadi mode
+ini memakai settingnya sendiri (`HF_API_STT_MODEL`, `HF_API_TTS_MODEL`) dan
+mengabaikan `HF_STT_MODEL`/`HF_TTS_MODEL`.
+
+Batasan yang perlu diketahui sebelum memakai `hf-api`:
+
+- **Bahasa STT tidak dapat dipaksakan.** Kontrak hosted ASR tidak punya parameter
+  `language`; Whisper mendeteksi sendiri. Validasi `STT_ALLOWED_LANGUAGES` tetap
+  berlaku di sisi service, tetapi tidak diteruskan ke model.
+- **Timestamp bergantung provider.** `return_timestamps` dikirim hanya saat
+  diminta, dan provider boleh mengabaikannya. Bila diabaikan, `segments` kosong
+  sementara `text` tetap terisi.
+- **TTS tidak mendukung bahasa Indonesia.** Tidak ada model TTS yang dilayani
+  Inference Providers dengan dukungan `id`; yang terdekat adalah Melayu (`ms`)
+  pada `ResembleAI/chatterbox-turbo`. Sesuaikan `TTS_ALLOWED_LANGUAGES` bila
+  memakai mode ini.
+- **Suara TTS berbeda dari VoxCPM2**, karena modelnya memang lain.
+- **Naikkan `STT_MAX_CONCURRENCY`/`TTS_MAX_CONCURRENCY`.** Default `1` ada untuk
+  melindungi satu GPU. Panggilan API tidak punya batasan itu, jadi default
+  tersebut justru membuat request mengantre tanpa alasan.
+- **Naikkan timeout.** Latency hosted sangat bervariasi. Transkripsi Whisper
+  yang sama melalui fal-ai terukur 2,3 detik saat panas dan 33 detik saat cold
+  start, sementara default `STT_TIMEOUT_SECONDS=10` dan
+  `REQUEST_TIMEOUT_SECONDS=15` tidak memberi ruang untuk kasus terburuk itu.
+  Ukur dengan kasus terburuk, bukan rata-rata. TTS Kokoro lebih stabil di
+  kisaran 2,2-2,8 detik.
+- **Kredit bisa habis.** Bila kuota Inference Providers tersisa nol, upstream
+  balas `402` dan service menormalkannya menjadi `503`
+  `INFERENCE_QUOTA_EXHAUSTED` dengan `retryable: false`.
+
 FastAPI tidak membaca `.env` secara otomatis. Gunakan pengelola environment
 deployment atau jalankan Uvicorn dengan `--env-file .env`.
 
