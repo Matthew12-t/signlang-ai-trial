@@ -279,3 +279,88 @@ async def test_from_settings_builds_configured_client_and_adapter(
             "strict": True,
         },
     }
+
+
+class FakeChoiceWithReason:
+    def __init__(self, content: str | None, finish_reason: str | None) -> None:
+        self.message = FakeMessage(content)
+        self.finish_reason = finish_reason
+
+
+class FakeResponseWithChoices:
+    def __init__(self, choices: list[object]) -> None:
+        self.choices = choices
+
+
+@pytest.mark.asyncio
+async def test_complete_json_names_a_truncated_response() -> None:
+    """A reasoning model can burn its budget before emitting any content."""
+
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(
+            FakeResponseWithChoices([FakeChoiceWithReason(None, "length")])
+        ),
+        model="test-model",
+    )
+
+    with pytest.raises(ProviderBadResponse) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=8, temperature=0.2)
+
+    assert_sanitized_error(
+        raised.value, "Provider stopped at the token limit before returning content"
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_json_separates_empty_content_from_truncation() -> None:
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(
+            FakeResponseWithChoices([FakeChoiceWithReason(None, "stop")])
+        ),
+        model="test-model",
+    )
+
+    with pytest.raises(ProviderBadResponse) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider returned an empty response")
+
+
+@pytest.mark.asyncio
+async def test_complete_json_rejects_a_response_without_choices() -> None:
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(FakeResponseWithChoices([])), model="test-model"
+    )
+
+    with pytest.raises(ProviderBadResponse) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider returned no completion choices")
+
+
+@pytest.mark.asyncio
+async def test_complete_json_maps_402_to_unavailable() -> None:
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(ResponseError(402)), model="test-model"
+    )
+
+    with pytest.raises(ProviderUnavailable) as raised:
+        await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    assert_sanitized_error(raised.value, "Provider credits are exhausted")
+
+
+@pytest.mark.asyncio
+async def test_failure_logs_name_the_error_type_but_not_its_text(caplog) -> None:
+    secret = "https://token:s3cr3t@example.invalid"
+    provider = HuggingFaceChatProvider(
+        client=FakeClient(RuntimeError(secret)), model="test-model"
+    )
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(ProviderBadResponse):
+            await provider.complete_json(messages(), {}, max_tokens=42, temperature=0.2)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "RuntimeError" in logged
+    assert "s3cr3t" not in logged
