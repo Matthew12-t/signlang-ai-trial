@@ -94,10 +94,12 @@ Batasan yang perlu diketahui sebelum memakai `hf-api`:
 - **Naikkan `STT_MAX_CONCURRENCY`/`TTS_MAX_CONCURRENCY`.** Default `1` ada untuk
   melindungi satu GPU. Panggilan API tidak punya batasan itu, jadi default
   tersebut justru membuat request mengantre tanpa alasan.
-- **Naikkan timeout.** Pada pengukuran nyata, satu transkripsi Whisper melalui
-  fal-ai memakan 33 detik, jauh di atas `STT_TIMEOUT_SECONDS=10` dan
-  `REQUEST_TIMEOUT_SECONDS=15`. Dengan default tersebut request akan selalu
-  balas `504`. TTS Kokoro jauh lebih cepat, sekitar 2,8 detik.
+- **Naikkan timeout.** Latency hosted sangat bervariasi. Transkripsi Whisper
+  yang sama melalui fal-ai terukur 2,3 detik saat panas dan 33 detik saat cold
+  start, sementara default `STT_TIMEOUT_SECONDS=10` dan
+  `REQUEST_TIMEOUT_SECONDS=15` tidak memberi ruang untuk kasus terburuk itu.
+  Ukur dengan kasus terburuk, bukan rata-rata. TTS Kokoro lebih stabil di
+  kisaran 2,2-2,8 detik.
 - **Kredit bisa habis.** Bila kuota Inference Providers tersisa nol, upstream
   balas `402` dan service menormalkannya menjadi `503`
   `INFERENCE_QUOTA_EXHAUSTED` dengan `retryable: false`.
