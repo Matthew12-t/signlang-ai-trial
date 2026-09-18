@@ -4,15 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Protocol
 
+from src.shared.async_utils import wait_for_inference
 from src.shared.config import Settings
 from src.shared.errors import ServiceError
 from src.shared.models import AudioArtifact, GeneratedAudio
 from src.tts.audio import concatenate_audio, encode_wav
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _IdempotencyLock:
+    lock: asyncio.Lock
+    users: int = 0
 
 
 class TextToSpeechProvider(Protocol):
@@ -77,6 +90,7 @@ class TTSService:
         self._cache_size = cache_size
         self._cache: OrderedDict[str, tuple[str, AudioArtifact]] = OrderedDict()
         self._cache_lock = asyncio.Lock()
+        self._idempotency_locks: dict[str, _IdempotencyLock] = {}
 
     @property
     def ready(self) -> bool:
@@ -128,26 +142,75 @@ class TTSService:
         payload_hash = hashlib.sha256(
             f"{normalized_text}\0{language}\0{voice}\0{output_format}".encode()
         ).hexdigest()
-        cached = await self._cached(idempotency_key, payload_hash)
-        if cached is not None:
-            return cached
+        async with self._lock_idempotency_key(idempotency_key):
+            cached = await self._cached(idempotency_key, payload_hash)
+            if cached is not None:
+                return cached
 
-        started = time.perf_counter()
-        text_chunks = split_text(normalized_text, self.settings.tts_chunk_chars)
-        generated = [
+            started = time.perf_counter()
+            text_chunks = split_text(normalized_text, self.settings.tts_chunk_chars)
+            timeout_seconds = min(
+                self.settings.request_timeout_seconds,
+                self.settings.tts_timeout_seconds,
+            )
+            try:
+                generated = await wait_for_inference(
+                    self._synthesize_chunks(text_chunks),
+                    timeout_seconds=timeout_seconds,
+                )
+            except asyncio.TimeoutError as error:
+                raise ServiceError(
+                    code="INFERENCE_TIMEOUT",
+                    message="Text-to-Speech inference exceeded its deadline.",
+                    status_code=504,
+                    retryable=True,
+                    details={"timeoutSeconds": timeout_seconds},
+                ) from error
+            combined = concatenate_audio(
+                generated, pause_ms=self.settings.tts_pause_ms
+            )
+            artifact = AudioArtifact(
+                content=encode_wav(combined),
+                media_type="audio/wav",
+                sample_rate=combined.sample_rate,
+                model_id=self.provider.model_id,
+                latency_ms=round((time.perf_counter() - started) * 1000),
+            )
+            await self._store(idempotency_key, payload_hash, artifact)
+            logger.info(
+                "TTS completed model=%s textChars=%s chunks=%s latencyMs=%s",
+                self.provider.model_id,
+                len(normalized_text),
+                len(text_chunks),
+                artifact.latency_ms,
+            )
+            return artifact
+
+    async def _synthesize_chunks(
+        self, text_chunks: list[str]
+    ) -> list[GeneratedAudio]:
+        return [
             await self.provider.synthesize(text_chunk)
             for text_chunk in text_chunks
         ]
-        combined = concatenate_audio(generated, pause_ms=self.settings.tts_pause_ms)
-        artifact = AudioArtifact(
-            content=encode_wav(combined),
-            media_type="audio/wav",
-            sample_rate=combined.sample_rate,
-            model_id=self.provider.model_id,
-            latency_ms=round((time.perf_counter() - started) * 1000),
-        )
-        await self._store(idempotency_key, payload_hash, artifact)
-        return artifact
+
+    @asynccontextmanager
+    async def _lock_idempotency_key(
+        self, idempotency_key: str
+    ) -> AsyncIterator[None]:
+        async with self._cache_lock:
+            state = self._idempotency_locks.setdefault(
+                idempotency_key, _IdempotencyLock(asyncio.Lock())
+            )
+            state.users += 1
+        try:
+            async with state.lock:
+                yield
+        finally:
+            async with self._cache_lock:
+                state.users -= 1
+                if state.users == 0:
+                    self._idempotency_locks.pop(idempotency_key, None)
 
     async def _cached(
         self, idempotency_key: str, payload_hash: str

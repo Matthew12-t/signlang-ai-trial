@@ -383,7 +383,7 @@
                 }
               }
             },
-            "description": "Content Too Large"
+            "description": "Request Entity Too Large"
           },
           "422": {
             "headers": {
@@ -401,7 +401,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Unprocessable Entity"
           },
           "429": {
             "headers": {
@@ -614,13 +614,11 @@
           },
           "language": {
             "type": "string",
-            "title": "Language",
-            "default": "en"
+            "title": "Language"
           },
           "encoding": {
             "type": "string",
-            "title": "Encoding",
-            "default": "wav"
+            "title": "Encoding"
           },
           "timestamps": {
             "type": "boolean",
@@ -630,7 +628,9 @@
         },
         "type": "object",
         "required": [
-          "audio"
+          "audio",
+          "language",
+          "encoding"
         ],
         "title": "Body_create_transcription_v1_stt_transcriptions_post"
       },

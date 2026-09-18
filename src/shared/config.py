@@ -39,6 +39,7 @@ class Settings:
     """
 
     internal_api_key: str | None = None
+    require_internal_api_key: bool = False
     log_level: str = "INFO"
     request_timeout_seconds: float = 15.0
     model_queue_timeout_seconds: float = 2.0
@@ -58,6 +59,7 @@ class Settings:
     stt_condition_on_previous_text: bool = False
     stt_max_audio_bytes: int = 10_000_000
     stt_max_concurrency: int = 1
+    stt_timeout_seconds: float = 10.0
 
     tts_model: str = "openbmb/VoxCPM2"
     tts_device: str = "cuda"
@@ -72,6 +74,7 @@ class Settings:
     tts_chunk_chars: int = 200
     tts_pause_ms: int = 120
     tts_max_concurrency: int = 1
+    tts_timeout_seconds: float = 12.0
 
     llm_backend: Literal["huggingface"] = "huggingface"
     llm_model: str = "Qwen/Qwen3-4B"
@@ -96,8 +99,18 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        internal_api_key = os.getenv("INTERNAL_API_KEY") or None
+        require_internal_api_key = _boolean(
+            "REQUIRE_INTERNAL_API_KEY", False
+        )
+        if require_internal_api_key and internal_api_key is None:
+            raise ValueError(
+                "INTERNAL_API_KEY must be set when REQUIRE_INTERNAL_API_KEY=true"
+            )
+
         return cls(
-            internal_api_key=os.getenv("INTERNAL_API_KEY") or None,
+            internal_api_key=internal_api_key,
+            require_internal_api_key=require_internal_api_key,
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             request_timeout_seconds=_floating_point("REQUEST_TIMEOUT_SECONDS", 15.0),
             model_queue_timeout_seconds=_floating_point(
@@ -121,6 +134,7 @@ class Settings:
             ),
             stt_max_audio_bytes=_integer("STT_MAX_AUDIO_BYTES", 10_000_000),
             stt_max_concurrency=max(1, _integer("STT_MAX_CONCURRENCY", 1)),
+            stt_timeout_seconds=_floating_point("STT_TIMEOUT_SECONDS", 10.0),
             tts_model=os.getenv("HF_TTS_MODEL", "openbmb/VoxCPM2"),
             tts_device=os.getenv("TTS_DEVICE", "cuda"),
             tts_optimize=_boolean("TTS_OPTIMIZE", True),
@@ -134,6 +148,7 @@ class Settings:
             tts_chunk_chars=_integer("TTS_CHUNK_CHARS", 200),
             tts_pause_ms=_integer("TTS_PAUSE_MS", 120),
             tts_max_concurrency=max(1, _integer("TTS_MAX_CONCURRENCY", 1)),
+            tts_timeout_seconds=_floating_point("TTS_TIMEOUT_SECONDS", 12.0),
             llm_backend="huggingface",
             llm_model=os.getenv("LLM_MODEL", "Qwen/Qwen3-4B"),
             hf_provider=os.getenv("HF_PROVIDER", "auto"),

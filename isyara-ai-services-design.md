@@ -171,7 +171,7 @@ Semua endpoint AI menggunakan prefix `/v1`. STT, TTS, Gloss, dan Recall merupaka
 | Header | Wajib | Keterangan |
 |---|---:|---|
 | `X-Internal-API-Key` | ya untuk antarlayanan nonlokal; tidak untuk Sign browser-local | autentikasi antarlayanan; jangan ditanam di frontend |
-| `X-Request-ID` | ya | UUID untuk korelasi log; dibuat oleh Application API atau web client sesuai boundary |
+| `X-Request-ID` | ya untuk pemanggil internal | UUID untuk korelasi log; service membuat UUID fallback bila tidak ada atau tidak valid |
 | `Idempotency-Key` | untuk TTS/Recall | mencegah pemrosesan ulang akibat retry |
 | `Content-Type` | ya | JSON, multipart, atau tipe audio yang sesuai |
 
@@ -554,8 +554,8 @@ Semua error JSON menggunakan bentuk yang sama:
 ```json
 {
   "error": {
-    "code": "HF_TIMEOUT",
-    "message": "The upstream inference provider did not respond in time.",
+    "code": "INFERENCE_TIMEOUT",
+    "message": "Model inference exceeded its deadline.",
     "retryable": true,
     "requestId": "8bc31d53-7dd1-46d5-ae72-d78d83aa1dcf",
     "details": {}
@@ -574,7 +574,7 @@ Kode utama:
 | 429 | `RATE_LIMITED` | ya | kuota/rate limit service atau provider |
 | 502 | `UPSTREAM_BAD_RESPONSE` | ya | response provider tidak dapat dipakai |
 | 503 | `MODEL_UNAVAILABLE` | ya | model belum siap/tidak tersedia |
-| 504 | `HF_TIMEOUT` | ya | provider melewati deadline |
+| 504 | `INFERENCE_TIMEOUT` | ya | inferensi model melewati deadline |
 
 ## 10. Timeout, Retry, dan Latency Budget
 
@@ -625,6 +625,7 @@ Daftar model yang benar-benar dirutekan oleh Hugging Face dapat berubah. Karena 
 ```dotenv
 # Shared
 INTERNAL_API_KEY=
+REQUIRE_INTERNAL_API_KEY=true
 LOG_LEVEL=INFO
 REQUEST_TIMEOUT_SECONDS=15
 MODEL_QUEUE_TIMEOUT_SECONDS=2
@@ -647,6 +648,7 @@ STT_MIN_SILENCE_MS=500
 STT_CONDITION_ON_PREVIOUS_TEXT=false
 STT_MAX_AUDIO_BYTES=10000000
 STT_MAX_CONCURRENCY=1
+STT_TIMEOUT_SECONDS=10
 
 # TTS
 HF_TTS_MODEL=openbmb/VoxCPM2
@@ -663,6 +665,7 @@ TTS_MAX_TEXT_CHARS=500
 TTS_CHUNK_CHARS=200
 TTS_PAUSE_MS=120
 TTS_MAX_CONCURRENCY=1
+TTS_TIMEOUT_SECONDS=12
 
 # Recall
 HF_RECALL_MODEL=Qwen/Qwen3-8B

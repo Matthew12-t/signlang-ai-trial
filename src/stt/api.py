@@ -36,8 +36,8 @@ def _service(request: Request) -> STTService:
 async def create_transcription(
     request: Request,
     audio: UploadFile = File(...),
-    language: str = Form(default="en"),
-    encoding: str = Form(default="wav"),
+    language: str = Form(...),
+    encoding: str = Form(...),
     timestamps: bool = Form(default=True),
 ) -> TranscriptionResponse:
     normalized_encoding = encoding.lower().strip()

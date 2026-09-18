@@ -45,6 +45,14 @@ Salin `.env.example` menjadi `.env`, export variabel yang diperlukan, kemudian:
 uvicorn src.main:app --host 0.0.0.0 --port 8001
 ```
 
+Isi `INTERNAL_API_KEY` sebelum mengaktifkan
+`REQUIRE_INTERNAL_API_KEY=true`. Untuk deployment yang bind ke alamat selain
+loopback, jangan menonaktifkan pemeriksaan API key.
+
+`PRELOAD_MODELS=false` menunda pemuatan model sampai request pertama. Request
+pertama dapat lebih lambat karena harus mengunduh atau memuat model terlebih
+dahulu.
+
 FastAPI tidak membaca `.env` secara otomatis. Gunakan pengelola environment
 deployment atau jalankan Uvicorn dengan `--env-file .env`.
 
