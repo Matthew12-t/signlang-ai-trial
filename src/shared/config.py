@@ -29,12 +29,28 @@ def _csv(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+INFERENCE_PROVIDERS = ("local", "hf-api")
+
+
+def _inference_provider(name: str) -> str:
+    """Read a provider selector, failing at startup on an unknown value."""
+
+    value = os.getenv(name, "local").strip().lower()
+    if value not in INFERENCE_PROVIDERS:
+        raise ValueError(
+            f"{name} must be one of {', '.join(INFERENCE_PROVIDERS)}; got '{value}'"
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Runtime settings.
 
-    Model inference is local. ``HF_TOKEN`` is only used by the Hugging Face Hub
-    clients while downloading model artifacts.
+    Inference runs locally by default. ``STT_PROVIDER``/``TTS_PROVIDER`` can be
+    switched to ``hf-api`` to call Hugging Face hosted inference instead, in
+    which case ``HF_TOKEN`` authenticates the calls rather than only downloading
+    model artifacts.
     """
 
     internal_api_key: str | None
@@ -47,6 +63,12 @@ class Settings:
 
     hf_token: str | None
     model_cache_dir: str | None
+    hf_api_provider: str
+
+    stt_provider: str
+    tts_provider: str
+    hf_api_stt_model: str
+    hf_api_tts_model: str
 
     stt_model: str
     stt_device: str
@@ -86,6 +108,9 @@ class Settings:
                 "INTERNAL_API_KEY must be set when REQUIRE_INTERNAL_API_KEY=true"
             )
 
+        stt_provider = _inference_provider("STT_PROVIDER")
+        tts_provider = _inference_provider("TTS_PROVIDER")
+
         return cls(
             internal_api_key=internal_api_key,
             require_internal_api_key=require_internal_api_key,
@@ -97,6 +122,15 @@ class Settings:
             enabled_services=_csv("ENABLED_SERVICES", "stt,tts"),
             preload_models=_boolean("PRELOAD_MODELS", True),
             hf_token=os.getenv("HF_TOKEN") or None,
+            hf_api_provider=os.getenv("HF_API_PROVIDER", "auto"),
+            stt_provider=stt_provider,
+            tts_provider=tts_provider,
+            hf_api_stt_model=os.getenv(
+                "HF_API_STT_MODEL", "openai/whisper-large-v3"
+            ),
+            hf_api_tts_model=os.getenv(
+                "HF_API_TTS_MODEL", "hexgrad/Kokoro-82M"
+            ),
             model_cache_dir=os.getenv("MODEL_CACHE_DIR") or None,
             stt_model=os.getenv(
                 "HF_STT_MODEL", "Systran/faster-whisper-large-v3"

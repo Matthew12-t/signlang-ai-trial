@@ -14,11 +14,29 @@ from src.shared.observability import configure_logging, install_request_middlewa
 from src.shared.providers.faster_whisper import FasterWhisperProvider
 from src.shared.providers.voxcpm import VoxCPMProvider
 from src.stt.api import router as stt_router
-from src.stt.service import STTService
+from src.stt.service import SpeechToTextProvider, STTService
 from src.tts.api import router as tts_router
-from src.tts.service import TTSService
+from src.tts.service import TextToSpeechProvider, TTSService
 
 logger = logging.getLogger(__name__)
+
+
+def _build_stt_provider(settings: Settings) -> SpeechToTextProvider:
+    """Hosted adapters are imported lazily so local mode needs no hub client."""
+
+    if settings.stt_provider == "hf-api":
+        from src.shared.providers.huggingface import HfApiSTTProvider
+
+        return HfApiSTTProvider(settings)
+    return FasterWhisperProvider(settings)
+
+
+def _build_tts_provider(settings: Settings) -> TextToSpeechProvider:
+    if settings.tts_provider == "hf-api":
+        from src.shared.providers.huggingface import HfApiTTSProvider
+
+        return HfApiTTSProvider(settings)
+    return VoxCPMProvider(settings)
 
 
 def create_app(
@@ -33,7 +51,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if application.state.stt_service is None and "stt" in runtime_settings.enabled_services:
-            stt_provider = FasterWhisperProvider(runtime_settings)
+            stt_provider = _build_stt_provider(runtime_settings)
             application.state.stt_service = STTService(stt_provider, runtime_settings)
             if runtime_settings.preload_models:
                 try:
@@ -42,7 +60,7 @@ def create_app(
                     logger.exception("STT started in degraded mode")
 
         if application.state.tts_service is None and "tts" in runtime_settings.enabled_services:
-            tts_provider = VoxCPMProvider(runtime_settings)
+            tts_provider = _build_tts_provider(runtime_settings)
             application.state.tts_service = TTSService(tts_provider, runtime_settings)
             if runtime_settings.preload_models:
                 try:
